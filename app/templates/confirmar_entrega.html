@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Confirmar Recebimento — Byecar</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #f0f2f7;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.10);
+      max-width: 480px;
+      width: 100%;
+      overflow: hidden;
+    }
+
+    .card-header {
+      background: #1a1d27;
+      padding: 28px 32px 24px;
+    }
+    .logo {
+      font-size: 20px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .logo-mark {
+      background: #4f7cff;
+      color: #fff;
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      font-weight: 800;
+    }
+    .card-header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #e8ecf6;
+      margin-top: 16px;
+      line-height: 1.4;
+    }
+    .card-header p {
+      font-size: 13px;
+      color: #8c91a8;
+      margin-top: 6px;
+    }
+
+    .card-body {
+      padding: 28px 32px;
+    }
+
+    .info-box {
+      background: #f5f7ff;
+      border: 1px solid #dde3ff;
+      border-radius: 10px;
+      padding: 14px 18px;
+      margin-bottom: 24px;
+    }
+    .info-box .label {
+      font-size: 11px;
+      font-weight: 600;
+      color: #8c91a8;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    .info-box .value {
+      font-size: 15px;
+      font-weight: 600;
+      color: #1a1d27;
+      margin-top: 2px;
+    }
+    .info-box .value.sub {
+      font-size: 13px;
+      font-weight: 400;
+      color: #555;
+    }
+
+    /* States */
+    .state { display: none; }
+    .state.active { display: block; }
+
+    /* Form */
+    .field { margin-bottom: 20px; }
+    .field label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #444;
+      margin-bottom: 6px;
+    }
+    .field input[type="date"] {
+      width: 100%;
+      padding: 11px 14px;
+      border: 1.5px solid #dde1ee;
+      border-radius: 8px;
+      font-size: 15px;
+      color: #1a1d27;
+      outline: none;
+      transition: border-color .15s;
+    }
+    .field input[type="date"]:focus {
+      border-color: #4f7cff;
+    }
+
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 13px;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: center;
+      text-decoration: none;
+      transition: opacity .15s, background .15s;
+      margin-bottom: 10px;
+    }
+    .btn:last-child { margin-bottom: 0; }
+    .btn:hover { opacity: .88; }
+    .btn-primary { background: #4f7cff; color: #fff; }
+    .btn-green   { background: #25d366; color: #fff; }
+    .btn-outline {
+      background: transparent;
+      border: 1.5px solid #dde1ee;
+      color: #555;
+    }
+
+    /* Success */
+    .success-icon {
+      width: 64px;
+      height: 64px;
+      background: #e8fdf2;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 30px;
+      margin: 0 auto 18px;
+    }
+    .success-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: #1a1d27;
+      text-align: center;
+    }
+    .success-desc {
+      font-size: 14px;
+      color: #666;
+      text-align: center;
+      margin: 8px 0 24px;
+      line-height: 1.5;
+    }
+
+    /* Error */
+    .error-msg {
+      font-size: 13px;
+      color: #d32f2f;
+      background: #fff0f0;
+      border: 1px solid #ffc8c8;
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-top: -12px;
+      margin-bottom: 16px;
+      display: none;
+    }
+    .error-msg.visible { display: block; }
+
+    .divider {
+      border: none;
+      border-top: 1px solid #eee;
+      margin: 20px 0;
+    }
+    .divider-label {
+      text-align: center;
+      font-size: 12px;
+      color: #aaa;
+      margin: -10px 0 16px;
+      background: #fff;
+      display: inline-block;
+      padding: 0 12px;
+      position: relative;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+
+    .footer-note {
+      font-size: 11px;
+      color: #bbb;
+      text-align: center;
+      padding: 16px 32px;
+      border-top: 1px solid #f0f0f0;
+      line-height: 1.5;
+    }
+
+    /* Already confirmed state */
+    .already-icon {
+      width: 56px;
+      height: 56px;
+      background: #fff8e1;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 26px;
+      margin: 0 auto 16px;
+    }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="card-header">
+    <div class="logo">
+      <div class="logo-mark">B</div>
+      Byecar
+    </div>
+    <h1>Confirmação de recebimento de veículo</h1>
+    <p>Preencha abaixo para registrar a retirada do seu veículo.</p>
+  </div>
+
+  <div class="card-body">
+
+    <!-- Info do contrato -->
+    <div class="info-box">
+      <div class="label">Cliente</div>
+      <div class="value">{{ cliente_nome }}</div>
+      {% if veiculo %}
+      <div style="margin-top:10px">
+        <div class="label">Veículo</div>
+        <div class="value sub">{{ veiculo }}</div>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- STATE: form -->
+    <div class="state active" id="state-form">
+      {% if ja_confirmado %}
+        <div class="already-icon">✓</div>
+        <div class="success-title" style="font-size:17px">Entrega já registrada</div>
+        <div class="success-desc">
+          A entrega deste veículo já foi confirmada em <strong>{{ data_confirmada }}</strong>.
+          <br/>Se precisar de ajuda, fale com o pós-venda.
+        </div>
+      {% else %}
+        <div class="field">
+          <label for="data-retirada">Data de retirada do veículo *</label>
+          <input type="date" id="data-retirada" max="{{ hoje }}" required/>
+        </div>
+        <div class="error-msg" id="err-msg">Por favor, selecione a data de retirada.</div>
+        <button class="btn btn-primary" onclick="confirmar()">✓ Confirmar recebimento</button>
+        <div style="text-align:center;font-size:12px;color:#aaa;margin:10px 0 0">
+          Ao confirmar, registramos a entrega no nosso sistema.
+        </div>
+      {% endif %}
+
+      <hr class="divider" style="margin-top:20px"/>
+      <div class="divider-label">Precisa de ajuda?</div>
+
+      <a class="btn btn-green" href="{{ whatsapp_url }}" target="_blank" rel="noopener">
+        💬 Falar com o pós-venda Byecar
+      </a>
+    </div>
+
+    <!-- STATE: success -->
+    <div class="state" id="state-success">
+      <div class="success-icon">✓</div>
+      <div class="success-title">Recebimento confirmado!</div>
+      <div class="success-desc">
+        Obrigado, <strong>{{ primeiro_nome }}</strong>!<br/>
+        Registramos a entrega do seu veículo em <strong id="data-exibida"></strong>.
+        <br/><br/>
+        Nossa equipe já foi notificada. Caso precise de qualquer suporte, fale conosco.
+      </div>
+      <a class="btn btn-green" href="{{ whatsapp_url }}" target="_blank" rel="noopener">
+        💬 Falar com o pós-venda Byecar
+      </a>
+    </div>
+
+    <!-- STATE: error -->
+    <div class="state" id="state-error">
+      <div class="success-icon" style="background:#fff0f0;font-size:28px">✗</div>
+      <div class="success-title" style="color:#d32f2f">Não foi possível confirmar</div>
+      <div class="success-desc" id="err-detail">Ocorreu um erro ao registrar a entrega. Por favor, entre em contato pelo WhatsApp.</div>
+      <a class="btn btn-green" href="{{ whatsapp_url }}" target="_blank" rel="noopener">
+        💬 Falar com o pós-venda Byecar
+      </a>
+    </div>
+
+  </div><!-- /card-body -->
+
+  <div class="footer-note">
+    Byecar — Customer Success &nbsp;|&nbsp; Este link é exclusivo para o seu contrato.
+  </div>
+</div>
+
+<script>
+  const CONTRATO_ID = "{{ contrato_id }}";
+
+  function fmt(dateStr) {
+    if (!dateStr) return '';
+    const [y, m, d] = dateStr.split('-');
+    return d + '/' + m + '/' + y;
+  }
+
+  async function confirmar() {
+    const input = document.getElementById('data-retirada');
+    const errMsg = document.getElementById('err-msg');
+
+    if (!input.value) {
+      errMsg.classList.add('visible');
+      input.focus();
+      return;
+    }
+    errMsg.classList.remove('visible');
+
+    const btn = document.querySelector('#state-form .btn-primary');
+    btn.disabled = true;
+    btn.textContent = 'Registrando…';
+
+    try {
+      const res = await fetch('/confirmar/' + CONTRATO_ID, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data_entrega: input.value }),
+      });
+      const json = await res.json();
+
+      if (res.ok && json.ok) {
+        document.getElementById('data-exibida').textContent = fmt(input.value);
+        show('state-success');
+      } else {
+        document.getElementById('err-detail').textContent =
+          json.detail || 'Erro ao registrar. Fale pelo WhatsApp.';
+        show('state-error');
+      }
+    } catch (e) {
+      document.getElementById('err-detail').textContent =
+        'Erro de conexão. Tente novamente ou fale pelo WhatsApp.';
+      show('state-error');
+    }
+  }
+
+  function show(stateId) {
+    document.querySelectorAll('.state').forEach(el => el.classList.remove('active'));
+    document.getElementById(stateId).classList.add('active');
+  }
+</script>
+</body>
+</html>

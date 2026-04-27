@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Byecar — Central de Entregas</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap">
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════
+     HEADER
+══════════════════════════════════════════════════════ -->
+<header>
+  <div class="header-inner">
+
+    <div class="logo">
+      <div class="logo-mark">B</div>
+      <div>
+        <div class="logo-text">Byecar <span class="logo-sub">Entregas</span></div>
+      </div>
+    </div>
+
+    <!-- Conexões às plataformas -->
+    <div class="header-center" id="platform-status-bar">
+      <span class="chip" id="chip-gwm"     title="GWM Sign & Drive">🚗 GWM</span>
+      <span class="chip" id="chip-byetech" title="Byetech CRM">🏢 Byetech</span>
+      <span class="chip" id="chip-metabase" title="Metabase Analytics">📊 Metabase</span>
+      <span class="chip" id="chip-movida"   title="Movida planilha">🔄 Movida</span>
+    </div>
+
+    <div class="header-actions">
+      <span id="last-sync" class="last-sync">–</span>
+      <button class="btn btn-outline btn-sm" id="btn-renovar" onclick="triggerRenovarSessao()" title="Renova apenas a sessão Byetech (mais rápido que sync completo)" style="display:none">
+        🔑 Renovar sessão
+      </button>
+      <button class="btn btn-outline btn-sm" id="btn-sync" onclick="triggerSync()">
+        <span>⟳</span> Byetech CRM
+      </button>
+      <button class="btn btn-outline btn-sm" id="btn-metabase" onclick="triggerMetabaseSync()">
+        <span>⟳</span> Metabase
+      </button>
+      <button class="btn btn-outline btn-sm" onclick="triggerRelatorioCompleto()" title="Envia relatório completo agora no Slack">
+        📋 Relatório
+      </button>
+      <button class="btn btn-outline btn-sm" id="btn-validar" onclick="triggerValidarGwmLm()" title="Valida entregas GWM/LM, atualiza Metabase 4 dias e envia relatório Slack">
+        🧪 Validar GWM/LM
+      </button>
+      <button class="btn btn-outline btn-sm" id="btn-sd" onclick="triggerSignAndDriveSync()" title="Consulta API Sign & Drive: detecta novos entregues e mudanças de status">
+        <span>⟳</span> Sign &amp; Drive
+      </button>
+      <button class="btn btn-outline btn-sm" onclick="triggerHealthCheck()" title="Valida todas as conexões do sistema">
+        🔌 Conexões
+      </button>
+      <button class="btn btn-primary btn-sm" onclick="openMovidaModal()">
+        ↑ Movida
+      </button>
+    </div>
+  </div>
+</header>
+
+<!-- ══════════════════════════════════════════════════════
+     LEMBRETES (injetados dinamicamente via JS)
+══════════════════════════════════════════════════════ -->
+<div id="byetech-pending-banner" style="display:none;align-items:center;gap:.75rem;
+     background:rgba(255,179,64,.12);border:1px solid var(--warning);border-radius:8px;
+     padding:.65rem 1rem;margin:.5rem 1rem 0;font-size:.85rem;color:var(--warning)">
+</div>
+<div class="reminder-banner" id="reminder-banner"></div>
+
+<!-- ══════════════════════════════════════════════════════
+     CARDS DE RESUMO
+══════════════════════════════════════════════════════ -->
+<section class="summary">
+  <div class="stat-card" id="stat-total" onclick="clearAllFilters()">
+    <div class="stat-num">–</div>
+    <div class="stat-label">Contratos ativos</div>
+  </div>
+  <div class="stat-card danger" id="stat-atrasados" onclick="filterByUrgencia('atrasado')">
+    <div class="stat-num">–</div>
+    <div class="stat-label">Atrasados</div>
+    <div class="stat-sub">Clique para filtrar</div>
+  </div>
+  <div class="stat-card warning" id="stat-criticos" onclick="filterByUrgencia('critico')">
+    <div class="stat-num">–</div>
+    <div class="stat-label">Críticos (≤5 dias)</div>
+    <div class="stat-sub">Clique para filtrar</div>
+  </div>
+  <div class="stat-card success" id="stat-hoje">
+    <div class="stat-num">–</div>
+    <div class="stat-label">Entregas hoje</div>
+    <div class="stat-sub">Registradas</div>
+  </div>
+  <div class="stat-card info" id="stat-disponiveis" onclick="filterByStage('disponivel')">
+    <div class="stat-num">–</div>
+    <div class="stat-label">Veículo Disponível</div>
+    <div class="stat-sub">Aguardando retirada</div>
+  </div>
+  <div class="stat-card purple" id="stat-unidas" onclick="filterByFonte('UNIDAS')">
+    <div class="stat-num">–</div>
+    <div class="stat-label">Unidas</div>
+    <div class="stat-sub">Email pendente</div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════
+     BARRA DE ETAPAS (pipeline)
+══════════════════════════════════════════════════════ -->
+<div class="pipeline-bar">
+  <div class="pipeline-inner">
+    <span class="pipeline-label">Etapa:</span>
+    <button class="stage-pill active" data-stage="" onclick="filterByStage('')">
+      📋 Todos <span class="pill-count" id="pill-count-all">–</span>
+    </button>
+    <span class="pill-sep">›</span>
+    <button class="stage-pill" data-stage="faturamento" onclick="filterByStage('faturamento')">
+      💰 Ag. Faturamento <span class="pill-count" id="pill-count-faturamento">–</span>
+    </button>
+    <span class="pill-sep">›</span>
+    <button class="stage-pill" data-stage="transporte" onclick="filterByStage('transporte')">
+      🚛 Ag. Transporte <span class="pill-count" id="pill-count-transporte">–</span>
+    </button>
+    <span class="pill-sep">›</span>
+    <button class="stage-pill" data-stage="disponivel" onclick="filterByStage('disponivel')">
+      ✅ Veículo Disponível <span class="pill-count" id="pill-count-disponivel">–</span>
+    </button>
+    <span class="pill-sep">›</span>
+    <button class="stage-pill" data-stage="entregue" onclick="filterByStage('entregue')">
+      📦 Definitivo Entregue <span class="pill-count" id="pill-count-entregue">–</span>
+    </button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     PAINEL ENTREGAS HOJE (injetado dinamicamente)
+══════════════════════════════════════════════════════ -->
+<div id="painel-entregas-hoje" class="painel-entregas" style="display:none"></div>
+
+<!-- ══════════════════════════════════════════════════════
+     FILTROS
+══════════════════════════════════════════════════════ -->
+<section class="filters">
+  <div class="filter-group">
+    <input type="text" id="filter-search"
+           placeholder="🔍 Buscar por nome, CPF, placa, veículo..."
+           oninput="applyFilters()" />
+    <select id="filter-fonte" onchange="applyFilters()">
+      <option value="">Todas as locadoras</option>
+      <option value="GWM">GWM</option>
+      <option value="SIGN & DRIVE">Sign & Drive</option>
+      <option value="LM">LM / AssineCar</option>
+      <option value="LOCALIZA">Localiza</option>
+      <option value="MOVIDA">Movida</option>
+      <option value="UNIDAS">Unidas</option>
+      <option value="VW">Volkswagen</option>
+      <option value="FLUA">Flua</option>
+      <option value="NISSAN">Nissan Move</option>
+    </select>
+    <select id="filter-urgencia" onchange="applyFilters()">
+      <option value="">Todas as urgências</option>
+      <option value="atrasado">⛔ Atrasados</option>
+      <option value="critico">🔴 Críticos (≤5 dias)</option>
+      <option value="alerta">🟡 Em alerta (6–20 dias)</option>
+      <option value="ok">🟢 Ok (&gt;20 dias)</option>
+    </select>
+    <select id="filter-sort" onchange="applyFilters()">
+      <option value="urgencia">Ordenar: Urgência</option>
+      <option value="atraso">Ordenar: Dias de atraso</option>
+      <option value="data_venda">Ordenar: Data da venda</option>
+      <option value="prazo">Ordenar: Prev. entrega</option>
+      <option value="nome">Ordenar: Nome</option>
+      <option value="fonte">Ordenar: Locadora</option>
+    </select>
+  </div>
+  <span class="filter-count" id="filter-count">– contratos</span>
+  <button class="btn btn-ghost btn-sm" onclick="clearAllFilters()">✕ Limpar</button>
+</section>
+
+<!-- ══════════════════════════════════════════════════════
+     TABELA
+══════════════════════════════════════════════════════ -->
+<section class="table-section">
+  <div class="table-wrap">
+    <table id="contracts-table">
+      <thead>
+        <tr>
+          <th>Locadora</th>
+          <th>Cliente</th>
+          <th>Veículo / Placa</th>
+          <th>Etapa no Portal</th>
+          <th>Byetech</th>
+          <th>Prazo</th>
+          <th>Dias</th>
+          <th>Ações</th>
+        </tr>
+      </thead>
+      <tbody id="table-body">
+        <tr><td colspan="8" class="loading">Carregando contratos</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════
+     MODAL: DETALHE DO CONTRATO
+══════════════════════════════════════════════════════ -->
+<div id="modal-detail" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2 id="modal-title">Detalhes do contrato</h2>
+      <button class="modal-close" onclick="closeModal('modal-detail')">✕</button>
+    </div>
+    <div id="modal-content" class="modal-content"></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     MODAL: 2FA
+══════════════════════════════════════════════════════ -->
+<div id="modal-2fa" class="modal hidden">
+  <div class="modal-box modal-sm">
+    <div class="modal-header">
+      <h2>🔐 Verificação em Dois Fatores</h2>
+      <button class="modal-close" onclick="closeModal('modal-2fa')">✕</button>
+    </div>
+    <div class="modal-content">
+      <div class="twofa-system-badge">
+        🏢 <span id="twofa-system-name">Byetech CRM</span>
+      </div>
+      <p>Abra seu app autenticador, gere um código de 6 dígitos e insira abaixo:</p>
+      <input type="text" id="twofa-input" placeholder="000000" maxlength="6"
+             inputmode="numeric" autocomplete="one-time-code"
+             style="font-size:1.8rem;letter-spacing:.5rem;text-align:center;font-family:monospace;"
+             oninput="this.value=this.value.replace(/\D/g,'')"
+             onkeydown="if(event.key==='Enter'&&this.value.length===6) submit2FA()" />
+      <div id="twofa-timer" style="font-size:.75rem;color:var(--muted);margin-top:.5rem;text-align:center;"></div>
+      <div style="margin-top:1rem;display:flex;gap:.75rem;">
+        <button class="btn btn-primary" style="flex:1" onclick="submit2FA()">Confirmar</button>
+        <button class="btn btn-ghost" onclick="cancel2FA()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     MODAL: IMPORTAR MOVIDA
+══════════════════════════════════════════════════════ -->
+<div id="modal-movida" class="modal hidden">
+  <div class="modal-box modal-sm">
+    <div class="modal-header">
+      <h2>🔄 Importar planilha Movida</h2>
+      <button class="modal-close" onclick="closeModal('modal-movida')">✕</button>
+    </div>
+    <div class="modal-content">
+      <p>Selecione o arquivo <strong>.xlsx, .xls ou .csv</strong> exportado da Movida:</p>
+      <div class="upload-zone" id="upload-zone"
+           ondragover="event.preventDefault();this.classList.add('drag-over')"
+           ondragleave="this.classList.remove('drag-over')"
+           ondrop="handleDrop(event)">
+        <span style="font-size:2rem">📂</span>
+        <span style="margin-top:.5rem">Arraste o arquivo aqui ou</span>
+        <label class="btn btn-outline btn-sm" style="cursor:pointer;margin-top:.5rem">
+          Escolher arquivo
+          <input type="file" id="movida-file" accept=".xlsx,.xls,.csv" hidden onchange="previewMovida()" />
+        </label>
+        <div id="file-name" style="margin-top:.5rem;font-size:.82rem;color:var(--muted)"></div>
+      </div>
+      <div id="movida-preview" class="movida-preview hidden"></div>
+      <div style="margin-top:1rem;display:flex;gap:.75rem;">
+        <button class="btn btn-primary" style="flex:1" onclick="uploadMovida()">Importar</button>
+        <button class="btn btn-ghost" onclick="closeModal('modal-movida')">Cancelar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     MODAL: REGISTRAR ENTREGA
+══════════════════════════════════════════════════════ -->
+<div id="modal-entregar" class="modal hidden">
+  <div class="modal-box modal-sm">
+    <div class="modal-header">
+      <h2>📦 Registrar Entrega</h2>
+      <button class="modal-close" onclick="closeModal('modal-entregar')">✕</button>
+    </div>
+    <div class="modal-content">
+      <p style="color:var(--text-dim);font-size:.9rem;margin-bottom:1rem">
+        Confirme a data em que o veículo foi entregue ao cliente.<br>
+        Isso atualizará o banco de dados <strong>e</strong> o Byetech CRM automaticamente.
+      </p>
+      <label style="display:block;font-size:.82rem;color:var(--muted);margin-bottom:.35rem">
+        Data de entrega
+      </label>
+      <input type="date" id="entregar-data-input"
+             style="width:100%;padding:.6rem .8rem;font-size:1rem;border-radius:6px;
+                    border:1px solid var(--border);background:var(--surface2);
+                    color:var(--cream);outline:none;"
+             onkeydown="if(event.key==='Enter') confirmDelivery()" />
+      <div style="margin-top:1.2rem;display:flex;gap:.75rem;">
+        <button id="btn-confirmar-entrega" class="btn btn-success" style="flex:1"
+                onclick="confirmDelivery()">Confirmar Entrega</button>
+        <button class="btn btn-ghost" onclick="closeModal('modal-entregar')">Cancelar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     MODAL: HEALTH CHECK
+══════════════════════════════════════════════════════ -->
+<div id="modal-health" class="modal hidden">
+  <div class="modal-box modal-sm">
+    <div class="modal-header">
+      <h2>🔌 Status das Conexões</h2>
+      <button class="modal-close" onclick="closeModal('modal-health')">✕</button>
+    </div>
+    <div class="modal-content" id="health-content">
+      <div style="text-align:center;padding:2rem;color:var(--muted)">Verificando...</div>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div id="toast" class="toast hidden"></div>
+
+<script src="/static/js/main.js"></script>
+</body>
+</html>

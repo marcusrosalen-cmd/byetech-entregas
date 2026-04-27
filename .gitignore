@@ -1,0 +1,64 @@
+.env
+*.db
+__pycache__/
+.playwright/
+uploads/
+*.pyc
+*.pyo
+
+# Dados sensíveis e sessão
+.byetech_session.json
+.byetech_cpf_map.json
+.byetech_pending.json
+
+# Logs
+*.log
+sync_debug.log
+server_new.log
+
+# Arquivos temporários
+movida_teste.xlsx
+signanddrive_status.xlsx
+status_entregas.xlsx
+limpar_duplicados*.py
+restaurar_sd_portal.py
+_refresh_byetech_session.py
+
+# Scripts de debug/inspeção (one-off)
+_audit_gwm.py
+_busca_entregues_portal.py
+_check_cpfs.py
+_inspect*.py
+_retry_byetech_crm.py
+_revert_gwm_false_positives.py
+_sync_gwm_entregas.py
+atualizar_byetech.py
+consulta_lista.py
+consulta_signanddrive.py
+debug_login.py
+import_excel_byetech.py
+run.py
+
+# Imagens de debug
+*.png
+after_*.png
+contracts_*.png
+detalhe_*.png
+filtro_*.png
+login_*.png
+orders_*.png
+portal_inspect_*.png
+table_*.png
+twofa_*.png
+
+# Arquivos de debug
+contracts_raw.json
+debug_api_response.json
+debug_output.txt
+filtering_options.json
+session_cookies.json
+twofa_*.txt
+
+# IDE
+.vscode/
+.idea/
