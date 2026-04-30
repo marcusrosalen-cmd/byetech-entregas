@@ -292,14 +292,8 @@ async def send_entregas_resumo(
 
 async def send_relatorio_completo(dias_vendas: int = 5, dias_entregas: int = 7) -> bool:
     """
-    Relatório diário completo — TODOS os casos, sem limites.
-    Estrutura:
-      1. Cabeçalho + resumo
-      2. Alertas 1/2 dias (todos)
-      3. Alertas 3-5/6-10 dias (todos)
-      4. Alertas 11-15/16-20 dias (todos)
-      5. Atrasados por locadora (todos, auto-dividido em mensagens)
-      6. Movimentações + Entregas (todos) + Novas vendas (todos)
+    Relatório diário completo consolidado — máximo 5 mensagens no Slack.
+    Seções: cabeçalho+resumo | atrasados | alertas | movimentações/entregas | novas vendas
     """
     if not SLACK_TOKEN:
         return False
@@ -360,139 +354,110 @@ async def send_relatorio_completo(dias_vendas: int = 5, dias_entregas: int = 7) 
              and d_min <= (c.dias_para_entrega or 999) <= d_max],
             key=lambda c: c.dias_para_entrega or 0
         )
-    a1  = _faixa(1, 1);  a2  = _faixa(2, 2);  a5  = _faixa(3, 5)
-    a10 = _faixa(6, 10); a15 = _faixa(11, 15); a20 = _faixa(16, 20)
-    total_alertas = len(a1)+len(a2)+len(a5)+len(a10)+len(a15)+len(a20)
-
-    atr_por_fonte: dict[str, list] = {}
-    for c in atrasados:
-        atr_por_fonte.setdefault(c.fonte or "?", []).append(c)
+    urgentes = _faixa(1, 2)
+    criticos = _faixa(3, 10)
+    alertas  = _faixa(11, 20)
 
     channel = await get_or_create_channel()
-    client  = get_client()
     now_str = _dt.now().strftime("%d/%m/%Y %H:%M")
 
-    # ── Helpers ───────────────────────────────────────────
     def _linha(c, mostrar_dias=True) -> str:
         fe   = FONTE_EMOJI.get(c.fonte or "", "📄")
         dp   = _fmt_date(c.data_prevista_entrega)
         dias = c.dias_para_entrega or 0
         dias_txt = f"*{abs(dias)}d atraso*" if dias < 0 else f"{dias}d"
-        linha = f"{fe} [{c.fonte or '?'}] *{c.cliente_nome or '—'}* — {c.veiculo or '—'} | prev {dp}"
+        linha = f"{fe} *{c.cliente_nome or '—'}* — {c.veiculo or '—'} | {dp}"
         if mostrar_dias:
             linha += f" | {dias_txt}"
-        linha += f" | _{c.status_atual or '—'}_"
         return linha
 
-    async def _post_lista(titulo: str, rows: list, mostrar_dias=True):
-        """Envia lista completa dividindo em múltiplas mensagens conforme necessário."""
-        if not rows:
-            await _post(channel=channel, text=f"*{titulo}*: nenhum contrato.")
-            return
-        MAX = 2600
-        blocos_txt = []
-        atual = ""
-        for i, c in enumerate(rows):
-            linha = _linha(c, mostrar_dias) + "\n"
-            if len(atual) + len(linha) > MAX:
-                blocos_txt.append(atual.rstrip())
-                atual = linha
-            else:
-                atual += linha
-        if atual:
-            blocos_txt.append(atual.rstrip())
+    def _truncar(linhas: list[str], max_chars=2800) -> str:
+        resultado, total = [], 0
+        for l in linhas:
+            if total + len(l) + 1 > max_chars:
+                resultado.append(f"_... e mais {len(linhas) - len(resultado)} contratos_")
+                break
+            resultado.append(l)
+            total += len(l) + 1
+        return "\n".join(resultado)
 
-        for idx, bloco in enumerate(blocos_txt):
-            parte = f" ({idx+1}/{len(blocos_txt)})" if len(blocos_txt) > 1 else ""
-            header = f"*{titulo} ({len(rows)} total){parte}*\n" if idx == 0 else f"*{titulo} — cont.{parte}*\n"
-            await _post(channel=channel, text=header + bloco)
-
-    # ── 1. Cabeçalho (apenas título, sem resumo) ──────────
-    await _post(
-        channel=channel,
-        blocks=[
-            {"type":"header","text":{"type":"plain_text",
-                "text": f"📋 Relatório Byetech Entregas — {hoje_str}"}},
-        ],
-        text=f"Relatório Byetech Entregas — {hoje_str}",
+    # ── Msg 1: Cabeçalho + resumo ─────────────────────────
+    resumo = (
+        f"📋 *Relatório Byetech Entregas — {hoje_str}*\n"
+        f"🔴 {len(atrasados)} atrasados  |  "
+        f"🚨 {len(urgentes)} urgentes (1-2d)  |  "
+        f"🟠 {len(criticos)} críticos (3-10d)  |  "
+        f"🟡 {len(alertas)} alertas (11-20d)\n"
+        f"📦 {len(entregues)} entregas nos últimos {dias_entregas} dias  |  "
+        f"🆕 {len(novas_list)} novas vendas nos últimos {dias_vendas} dias"
     )
+    await _post(channel=channel, text=resumo)
 
-    # ── 2. Alertas urgentes: 1 e 2 dias ───────────────────
-    await _post_lista("🚨 ALERTAS — 1 DIA", a1)
-    await _post_lista("🔴 ALERTAS — 2 DIAS", a2)
+    # ── Msg 2: Atrasados + Urgentes ───────────────────────
+    secoes = []
+    if atrasados:
+        linhas_atr = [_linha(c) for c in atrasados[:40]]
+        secoes.append(f"*🔴 ATRASADOS ({len(atrasados)})*\n" + _truncar(linhas_atr))
+    if urgentes:
+        linhas_urg = [_linha(c) for c in urgentes[:20]]
+        secoes.append(f"*🚨 URGENTES 1-2 DIAS ({len(urgentes)})*\n" + _truncar(linhas_urg))
+    if secoes:
+        await _post(channel=channel, text="\n\n".join(secoes))
 
-    # ── 3. Alertas 3-5 e 6-10 dias ────────────────────────
-    await _post_lista("🟠 ALERTAS — 3 a 5 DIAS", a5)
-    await _post_lista("🟡 ALERTAS — 6 a 10 DIAS", a10)
+    # ── Msg 3: Críticos + Alertas ─────────────────────────
+    secoes = []
+    if criticos:
+        linhas_cr = [_linha(c) for c in criticos[:30]]
+        secoes.append(f"*🟠 CRÍTICOS 3-10 DIAS ({len(criticos)})*\n" + _truncar(linhas_cr))
+    if alertas:
+        linhas_al = [_linha(c) for c in alertas[:30]]
+        secoes.append(f"*🟡 ALERTAS 11-20 DIAS ({len(alertas)})*\n" + _truncar(linhas_al))
+    if secoes:
+        await _post(channel=channel, text="\n\n".join(secoes))
 
-    # ── 4. Alertas 11-15 e 16-20 dias ─────────────────────
-    await _post_lista("🟡 ALERTAS — 11 a 15 DIAS", a15)
-    await _post_lista("🟢 ALERTAS — 16 a 20 DIAS", a20)
-
-    # ── 5. Atrasados por locadora (todos) ─────────────────
-    for fonte, lst in sorted(atr_por_fonte.items(), key=lambda x: -len(x[1])):
-        fe = FONTE_EMOJI.get(fonte, "📄")
-        pior = abs(min((c.dias_para_entrega or 0) for c in lst))
-        await _post_lista(f"🔴 ATRASADOS {fe} {fonte} (maior atraso: {pior}d)", lst)
-
-    # ── 6. Movimentações ──────────────────────────────────
-    mv_usar  = mv_hoje  if mv_hoje  else mv_ontem
-    mv_label = "hoje"   if mv_hoje  else "ontem"
+    # ── Msg 4: Movimentações + Entregas ───────────────────
+    secoes = []
+    mv_usar  = mv_hoje if mv_hoje else mv_ontem
+    mv_label = "hoje"  if mv_hoje else "ontem"
     if mv_usar:
         mv_linhas = [
-            f"{FONTE_EMOJI.get(hist.fonte or '','📄')} [{hist.fonte or '?'}] "
-            f"*{c.cliente_nome or '—'}* — {c.veiculo or '—'}\n"
-            f"   _{hist.status_anterior or '—'}_ → *{hist.status_novo or '—'}*"
-            for hist, c in mv_usar
+            f"{FONTE_EMOJI.get(hist.fonte or '', '📄')} *{c.cliente_nome or '—'}*"
+            f" _{hist.status_anterior or '—'}_ → *{hist.status_novo or '—'}*"
+            for hist, c in mv_usar[:30]
         ]
-        MAX = 2600
-        blocos_mv, atual = [], ""
-        for linha in mv_linhas:
-            if len(atual) + len(linha) + 1 > MAX and atual:
-                blocos_mv.append(atual)
-                atual = linha + "\n"
-            else:
-                atual += linha + "\n"
-        if atual: blocos_mv.append(atual)
-        for idx, bloco in enumerate(blocos_mv):
-            parte = f" ({idx+1}/{len(blocos_mv)})" if len(blocos_mv) > 1 else ""
-            await _post(channel=channel,
-                text=f"*🔄 Movimentações {mv_label} ({len(mv_usar)}){parte}*\n{bloco}")
-    else:
-        await _post(channel=channel, text="*🔄 Movimentações:* nenhuma registrada hoje.")
+        secoes.append(f"*🔄 Movimentações {mv_label} ({len(mv_usar)})*\n" + _truncar(mv_linhas))
 
-    # ── 7. Entregas ───────────────────────────────────────
-    await _post_lista(
-        f"📦 VEÍCULOS ENTREGUES — últimos {dias_entregas} dias",
-        sorted(entregues, key=lambda c: c.data_entrega_definitiva or _dt.min, reverse=True),
-        mostrar_dias=False,
-    )
+    if entregues:
+        ent_sorted = sorted(entregues, key=lambda c: c.data_entrega_definitiva or _dt.min, reverse=True)
+        ent_linhas = [_linha(c, mostrar_dias=False) for c in ent_sorted[:20]]
+        secoes.append(f"*📦 Entregues — últimos {dias_entregas} dias ({len(entregues)})*\n" + _truncar(ent_linhas))
 
-    # ── 8. Novas vendas (todos, com nome) ─────────────────
-    novas_por_dia: dict[str, list] = {}
-    for c in novas_list:
-        ref_dt = c.data_venda or c.criado_em
-        if not ref_dt: continue
-        dia = (ref_dt.date() if hasattr(ref_dt, "date") else ref_dt).strftime("%Y-%m-%d")
-        novas_por_dia.setdefault(dia, []).append(c)
+    if secoes:
+        await _post(channel=channel, text="\n\n".join(secoes))
 
-    if novas_por_dia:
+    # ── Msg 5: Novas vendas ───────────────────────────────
+    if novas_list:
+        novas_por_dia: dict[str, list] = {}
+        for c in novas_list:
+            ref_dt = c.data_venda or c.criado_em
+            if not ref_dt: continue
+            dia = (ref_dt.date() if hasattr(ref_dt, "date") else ref_dt).strftime("%Y-%m-%d")
+            novas_por_dia.setdefault(dia, []).append(c)
+
+        linhas_v = []
         for dia in sorted(novas_por_dia.keys(), reverse=True):
             try: dia_fmt = _dt.strptime(dia, "%Y-%m-%d").strftime("%d/%m/%Y")
             except: dia_fmt = dia
             itens = novas_por_dia[dia]
-            await _post_lista(
-                f"🆕 NOVAS VENDAS — {dia_fmt} ({len(itens)} contratos)",
-                sorted(itens, key=lambda c: c.fonte or ""),
-                mostrar_dias=False,
-            )
-    else:
-        await _post(channel=channel,
-            text=f"*🆕 Novas vendas:* nenhuma nos últimos {dias_vendas} dias.")
+            nomes = ", ".join(c.cliente_nome or "—" for c in itens[:5])
+            if len(itens) > 5: nomes += f" +{len(itens)-5}"
+            linhas_v.append(f"• {dia_fmt}: *{len(itens)}* contrato{'s' if len(itens)!=1 else ''} — {nomes}")
 
-    # ── Rodapé ────────────────────────────────────────────
+        await _post(channel=channel,
+            text=f"*🆕 Novas vendas — últimos {dias_vendas} dias ({len(novas_list)} total)*\n" + "\n".join(linhas_v[:15]))
+
     await _post(channel=channel,
-        text=f"_✅ Relatório completo gerado em {now_str} · Byecar Central de Entregas_")
+        text=f"_✅ Relatório gerado em {now_str} · Byecar_")
     return True
 
 
