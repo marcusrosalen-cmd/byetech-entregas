@@ -1132,6 +1132,166 @@ async def health_check():
     return {"ok": all_ok, "connections": results}
 
 
+# ── Dashboard: página de analytics ──────────────────────
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard_page(request: Request):
+    return templates.TemplateResponse(request, "dashboard.html")
+
+
+@app.get("/api/stats/dashboard")
+async def stats_dashboard(db: AsyncSession = Depends(get_db)):
+    """
+    Retorna dados agregados para a aba de Dashboard:
+    - KPIs gerais
+    - Distribuição por fonte (ativos, entregues, atrasados)
+    - Distribuição por status
+    - Entregas por semana (últimas 8 semanas)
+    - Novas vendas por semana (últimas 8 semanas)
+    - Contratos mais críticos (top 10 atrasados)
+    """
+    from datetime import timedelta
+    from collections import defaultdict, Counter
+
+    hoje = datetime.now().date()
+    hoje_ini = datetime.combine(hoje, datetime.min.time())
+
+    # Todos os ativos
+    res_ativos = await db.execute(
+        select(Contrato).where(Contrato.data_entrega_definitiva.is_(None))
+    )
+    ativos = res_ativos.scalars().all()
+
+    # Entregues últimas 8 semanas
+    corte_ent = datetime.combine(hoje - timedelta(weeks=8), datetime.min.time())
+    res_ent = await db.execute(
+        select(Contrato).where(Contrato.data_entrega_definitiva >= corte_ent)
+    )
+    entregues = res_ent.scalars().all()
+
+    # Novas vendas últimas 8 semanas
+    corte_venda = datetime.combine(hoje - timedelta(weeks=8), datetime.min.time())
+    res_vendas = await db.execute(
+        select(Contrato).where(Contrato.data_venda >= corte_venda)
+    )
+    vendas = res_vendas.scalars().all()
+
+    # ── KPIs ──────────────────────────────────────────────
+    n_atrasados = sum(1 for c in ativos if c.atrasado or (c.dias_para_entrega or 0) < 0)
+    n_urgentes  = sum(1 for c in ativos if not c.atrasado and 0 <= (c.dias_para_entrega or 999) <= 2)
+    n_criticos  = sum(1 for c in ativos if not c.atrasado and 3 <= (c.dias_para_entrega or 999) <= 10)
+    n_alertas   = sum(1 for c in ativos if not c.atrasado and 11 <= (c.dias_para_entrega or 999) <= 20)
+    n_ok        = len(ativos) - n_atrasados - n_urgentes - n_criticos - n_alertas
+    # Entregues na semana corrente
+    inicio_semana = datetime.combine(hoje - timedelta(days=hoje.weekday()), datetime.min.time())
+    n_ent_semana  = sum(1 for c in entregues if c.data_entrega_definitiva and c.data_entrega_definitiva >= inicio_semana)
+    n_ent_mes     = sum(1 for c in entregues
+                        if c.data_entrega_definitiva and c.data_entrega_definitiva >= datetime.combine(hoje.replace(day=1), datetime.min.time()))
+
+    kpis = {
+        "total_ativos": len(ativos),
+        "atrasados": n_atrasados,
+        "urgentes": n_urgentes,
+        "criticos": n_criticos,
+        "alertas": n_alertas,
+        "ok": n_ok,
+        "perc_atrasados": round(n_atrasados / len(ativos) * 100, 1) if ativos else 0,
+        "entregas_semana": n_ent_semana,
+        "entregas_mes": n_ent_mes,
+        "entregas_total_periodo": len(entregues),
+        "novas_vendas_8sem": len(vendas),
+    }
+
+    # ── Por fonte ─────────────────────────────────────────
+    fontes_ativos   = Counter(c.fonte for c in ativos if c.fonte)
+    fontes_ent      = Counter(c.fonte for c in entregues if c.fonte)
+    fontes_atrasado = Counter(c.fonte for c in ativos if c.atrasado and c.fonte)
+    todas_fontes    = sorted(set(list(fontes_ativos.keys()) + list(fontes_ent.keys())))
+
+    por_fonte = [
+        {
+            "fonte": f,
+            "ativos": fontes_ativos.get(f, 0),
+            "entregues": fontes_ent.get(f, 0),
+            "atrasados": fontes_atrasado.get(f, 0),
+        }
+        for f in todas_fontes
+    ]
+
+    # ── Por status ────────────────────────────────────────
+    status_cnt = Counter(c.status_atual for c in ativos if c.status_atual)
+    por_status = [{"status": s, "total": n} for s, n in status_cnt.most_common(10)]
+
+    # ── Entregas por semana (últimas 8) ───────────────────
+    semanas_ent: dict[str, int] = defaultdict(int)
+    for c in entregues:
+        if not c.data_entrega_definitiva:
+            continue
+        dt = c.data_entrega_definitiva
+        if isinstance(dt, datetime):
+            dt = dt.date()
+        # ISO week
+        iso = dt.isocalendar()
+        semanas_ent[f"{iso.year}-W{iso.week:02d}"] += 1
+
+    # Gera as últimas 8 semanas (mesmo que vazia = 0)
+    semanas_labels = []
+    semanas_valores = []
+    for i in range(7, -1, -1):
+        dia = hoje - timedelta(weeks=i)
+        iso = dia.isocalendar()
+        key = f"{iso.year}-W{iso.week:02d}"
+        semanas_labels.append(f"Sem {iso.week}/{iso.year}")
+        semanas_valores.append(semanas_ent.get(key, 0))
+
+    # ── Vendas por semana (últimas 8) ─────────────────────
+    semanas_venda: dict[str, int] = defaultdict(int)
+    for c in vendas:
+        dt_ref = c.data_venda or c.criado_em
+        if not dt_ref:
+            continue
+        if isinstance(dt_ref, datetime):
+            dt_ref = dt_ref.date()
+        iso = dt_ref.isocalendar()
+        semanas_venda[f"{iso.year}-W{iso.week:02d}"] += 1
+
+    vendas_valores = []
+    for i in range(7, -1, -1):
+        dia = hoje - timedelta(weeks=i)
+        iso = dia.isocalendar()
+        key = f"{iso.year}-W{iso.week:02d}"
+        vendas_valores.append(semanas_venda.get(key, 0))
+
+    # ── Top 10 atrasados ─────────────────────────────────
+    top_atrasados = sorted(
+        [c for c in ativos if c.atrasado or (c.dias_para_entrega or 0) < 0],
+        key=lambda c: c.dias_para_entrega or 0
+    )[:10]
+
+    criticos_lista = [
+        {
+            "id": c.id,
+            "cliente_nome": c.cliente_nome or "—",
+            "fonte": c.fonte or "—",
+            "veiculo": c.veiculo or "—",
+            "status": c.status_atual or "—",
+            "data_prevista": c.data_prevista_entrega.strftime("%d/%m/%Y") if c.data_prevista_entrega else "—",
+            "dias": c.dias_para_entrega or 0,
+        }
+        for c in top_atrasados
+    ]
+
+    return {
+        "kpis": kpis,
+        "por_fonte": por_fonte,
+        "por_status": por_status,
+        "semanas_labels": semanas_labels,
+        "entregas_por_semana": semanas_valores,
+        "vendas_por_semana": vendas_valores,
+        "top_atrasados": criticos_lista,
+        "gerado_em": datetime.now().isoformat(),
+    }
+
+
 # ── Helpers ───────────────────────────────────────────────
 def _contrato_to_dict(c: Contrato) -> dict:
     def iso(dt):

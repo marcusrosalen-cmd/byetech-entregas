@@ -180,37 +180,66 @@ async def job_metabase_daily():
         logger.error(f"❌ [scheduler] Metabase erro: {e}")
 
 
-def start_scheduler():
-    """Inicia o scheduler com os jobs configurados."""
-    scheduler = get_scheduler()
+async def job_signanddrive_daily():
+    """Job diário (dias úteis): atualiza status dos pedidos Sign & Drive via API."""
+    from app.services.sync_service import run_signanddrive_sync
+    logger.info("⏰ [scheduler] Sign & Drive sync diário...")
+    try:
+        result = await run_signanddrive_sync()
+        logger.info(f"✅ [scheduler] Sign & Drive: {result}")
+    except Exception as e:
+        logger.error(f"❌ [scheduler] Sign & Drive erro: {e}")
 
-    # Sync completo Byetech CRM — 08:00 todos os dias
+
+def start_scheduler():
+    """
+    Inicia o scheduler com os jobs configurados.
+    Todos os jobs rodam apenas em dias úteis (seg-sex), exceto Metabase
+    que também roda aos sábados para capturar contratos do fim de semana.
+    """
+    scheduler = get_scheduler()
+    BRA = "America/Sao_Paulo"
+
+    # Sync completo Byetech CRM — 08:00 dias úteis (seg-sex)
     scheduler.add_job(
         job_sync_all,
-        CronTrigger(hour=8, minute=0, timezone="America/Sao_Paulo"),
+        CronTrigger(hour=8, minute=0, day_of_week="mon-fri", timezone=BRA),
         id="sync_all",
         replace_existing=True,
-        name="Sync completo diário",
+        name="Sync completo (dias úteis)",
     )
 
-    # Metabase sync diário — 08:45 (novos contratos do dia, antes dos alertas)
+    # Sign & Drive sync — 08:20 dias úteis (não precisa de Playwright, roda no Render)
+    scheduler.add_job(
+        job_signanddrive_daily,
+        CronTrigger(hour=8, minute=20, day_of_week="mon-fri", timezone=BRA),
+        id="signanddrive_daily",
+        replace_existing=True,
+        name="Sign & Drive sync diário",
+    )
+
+    # Metabase sync — 08:45 seg-sab (captura contratos criados no fim de semana)
     scheduler.add_job(
         job_metabase_daily,
-        CronTrigger(hour=8, minute=45, timezone="America/Sao_Paulo"),
+        CronTrigger(hour=8, minute=45, day_of_week="mon-sat", timezone=BRA),
         id="metabase_daily",
         replace_existing=True,
         name="Metabase sync diário",
     )
 
-    # Alertas Slack + e-mails Unidas — 09:00 (após sync Metabase)
+    # Alertas Slack + relatório — 09:00 dias úteis
     scheduler.add_job(
         job_check_alerts,
-        CronTrigger(hour=9, minute=0, timezone="America/Sao_Paulo"),
+        CronTrigger(hour=9, minute=0, day_of_week="mon-fri", timezone=BRA),
         id="check_alerts",
         replace_existing=True,
-        name="Alertas Slack + e-mails Unidas",
+        name="Alertas Slack + e-mails Unidas (dias úteis)",
     )
 
     scheduler.start()
-    logger.info("✅ Scheduler iniciado — Byetech 08:00 | Metabase 08:45 | Alertas+Unidas 09:00 (Brasília)")
+    logger.info(
+        "✅ Scheduler iniciado — "
+        "Byetech 08:00 (seg-sex) | S&D 08:20 (seg-sex) | "
+        "Metabase 08:45 (seg-sab) | Alertas 09:00 (seg-sex)"
+    )
     return scheduler
