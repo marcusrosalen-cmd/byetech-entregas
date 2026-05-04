@@ -207,6 +207,13 @@ async def marcar_entregue(contrato_id: str, body: EntregarBody, db: AsyncSession
     db.add(hist)
     await db.commit()
 
+    # ── Espelha entrega no Lovable Cloud ──
+    try:
+        from app.services.lovable_client import marcar_entregue as _lv_entrega
+        _lv_entrega(contrato_id, data)
+    except Exception as _lv_err:
+        logger.debug(f"[Lovable] marcar_entregue ignorado: {_lv_err}")
+
     # ── Byetech: atualiza de forma síncrona com feedback real ──
     byetech_status = "sem_cpf"
     byetech_msg    = "Contrato sem CPF — não foi possível atualizar o Byetech"

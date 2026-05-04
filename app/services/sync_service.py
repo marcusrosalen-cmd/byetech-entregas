@@ -144,7 +144,7 @@ async def _upsert_contrato(session: AsyncSession, data: dict, portal_update: boo
         )
         session.add(novo)
 
-    # Registra mudança de status no histórico
+    # Registra mudança de status no histórico (SQLite local)
     if mudou_status:
         hist = HistoricoStatus(
             contrato_id=contrato_id,
@@ -153,6 +153,20 @@ async def _upsert_contrato(session: AsyncSession, data: dict, portal_update: boo
             fonte=fonte,
         )
         session.add(hist)
+
+    # ── Espelha para o Lovable Cloud (não bloqueia, falha silenciosa) ──
+    try:
+        from app.services.lovable_client import upsert_contrato as _lv_upsert, add_historico as _lv_hist
+        _lv_upsert(data, contrato_id)
+        if mudou_status:
+            _lv_hist(
+                contrato_id_externo=contrato_id,
+                status_anterior=status_anterior,
+                status_novo=status_novo,
+                fonte=fonte,
+            )
+    except Exception as _lv_err:
+        logger.debug(f"[Lovable] push ignorado: {_lv_err}")
 
     return mudou_status
 
