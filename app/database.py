@@ -71,6 +71,27 @@ class ConfigScraper(Base):
     atualizado_em = Column(DateTime, default=datetime.utcnow)
 
 
+class ByetechPendente(Base):
+    """
+    Fila de atualizações pendentes no Byetech CRM.
+    Render não tem Playwright → gravamos aqui e a máquina local processa.
+    """
+    __tablename__ = "byetech_pendentes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    contrato_id     = Column(String, nullable=False)        # ID no banco local
+    cliente_nome    = Column(String)
+    cliente_cpf     = Column(String, nullable=False)
+    placa           = Column(String)
+    data_entrega    = Column(DateTime, nullable=False)
+    tipo            = Column(String, default="entrega")     # entrega | fase
+    novo_status     = Column(String)                        # para tipo=fase
+    tentativas      = Column(Integer, default=0)
+    erro_ultimo     = Column(Text)
+    criado_em       = Column(DateTime, default=datetime.utcnow)
+    processado_em   = Column(DateTime)                      # NULL = pendente
+
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

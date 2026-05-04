@@ -196,19 +196,63 @@ async def _aplicar_entrega_portal(r: dict):
     cpf = r.get("cliente_cpf_cnpj")
     if cpf:
         import asyncio as _asyncio
-        _asyncio.create_task(_update_byetech_crm_entrega(cpf, r.get("placa", ""), data_entrega))
+        fonte    = r.get("fonte", "")
+        id_ext   = r.get("id_externo", "")
+        cid      = _contrato_id(fonte, id_ext, cpf) if (fonte and id_ext) else cpf
+        _asyncio.create_task(_update_byetech_crm_entrega(
+            cpf, r.get("placa", ""), data_entrega,
+            contrato_id=cid, cliente_nome=r.get("cliente_nome", "")
+        ))
 
 
-async def _update_byetech_crm_entrega(cpf: str, placa: str, data: datetime):
+async def _update_byetech_crm_entrega(cpf: str, placa: str, data: datetime,
+                                      contrato_id: str = "", cliente_nome: str = ""):
+    """Atualiza entrega no Byetech. Se Playwright indisponível, enfileira no banco."""
     try:
         from app.scrapers.byetech_crm import update_delivery_by_cpf
+    except ImportError:
+        logger.warning(f"[Byetech] Playwright indisponível — CPF {cpf[:6]}... enfileirado")
+        await _enfileirar_byetech(contrato_id, cpf, placa, data, cliente_nome)
+        return
+    try:
         ok = await update_delivery_by_cpf(cpf_raw=cpf, data_entrega=data, placa=placa or None)
         if ok:
-            logger.info(f"[Byetech] CPF {cpf[:6]}... → Definitivo Entregue em {data.date()}")
+            logger.info(f"[Byetech] CPF {cpf[:6]}... marcado Definitivo Entregue em {data.date()}")
         else:
-            logger.error(f"[Byetech] Falha ao atualizar CPF {cpf[:6]}... — veja logs do scraper")
+            logger.error(f"[Byetech] Falha ao atualizar CPF {cpf[:6]}... — enfileirado")
+            await _enfileirar_byetech(contrato_id, cpf, placa, data, cliente_nome)
     except Exception as e:
-        logger.error(f"Erro ao atualizar Byetech CRM entrega: {e}")
+        logger.error(f"[Byetech] Erro entrega CPF {cpf[:6]}...: {e} — enfileirado")
+        await _enfileirar_byetech(contrato_id, cpf, placa, data, cliente_nome)
+
+
+async def _enfileirar_byetech(contrato_id: str, cpf: str, placa: str,
+                               data: datetime, cliente_nome: str = ""):
+    """Salva atualização pendente no banco (persiste entre deploys)."""
+    try:
+        from app.database import ByetechPendente, SessionLocal as _SL
+        from sqlalchemy import delete as _del
+        async with _SL() as s:
+            await s.execute(
+                _del(ByetechPendente).where(
+                    ByetechPendente.contrato_id == contrato_id,
+                    ByetechPendente.processado_em.is_(None),
+                    ByetechPendente.tipo == "entrega",
+                )
+            )
+            p = ByetechPendente(
+                contrato_id=contrato_id or cpf,
+                cliente_nome=cliente_nome,
+                cliente_cpf=cpf,
+                placa=placa or None,
+                data_entrega=data,
+                tipo="entrega",
+            )
+            s.add(p)
+            await s.commit()
+            logger.info(f"[Byetech] Enfileirado para processamento local: {cliente_nome or cpf[:6]}")
+    except Exception as e:
+        logger.error(f"[Byetech] Falha ao enfileirar: {e}")
 
 
 async def _resumo_entregas_hoje() -> list[dict]:

@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import init_db, get_db, SessionLocal, Contrato, HistoricoStatus, AlertaEnviado
+from app.database import init_db, get_db, SessionLocal, Contrato, HistoricoStatus, AlertaEnviado, ByetechPendente
 from app.services.sync_service import (
     get_sync_state, provide_twofa, set_sync_state,
 )
@@ -253,49 +253,60 @@ async def marcar_entregue(contrato_id: str, body: EntregarBody, db: AsyncSession
     except Exception as _lv_err:
         logger.debug(f"[Lovable] marcar_entregue ignorado: {_lv_err}")
 
-    # ── Byetech: atualiza de forma síncrona com feedback real ──
+    # ── Byetech: tenta atualizar com Playwright se disponível, senão enfileira ──
     byetech_status = "sem_cpf"
     byetech_msg    = "Contrato sem CPF — não foi possível atualizar o Byetech"
+    placa = c.placa if c.placa and str(c.placa).lower() not in ("nan", "n/a", "") else None
 
     if c.cliente_cpf_cnpj:
-        from app.scrapers.byetech_crm import (
-            update_delivery_by_cpf, _load_session_from_disk, _test_session
-        )
-        placa = c.placa if c.placa and str(c.placa).lower() not in ("nan", "n/a", "") else None
+        _playwright_ok = False
+        try:
+            from app.scrapers.byetech_crm import (
+                update_delivery_by_cpf, _load_session_from_disk, _test_session
+            )
+            _playwright_ok = True
+        except ImportError:
+            pass
 
-        cookies = _load_session_from_disk()
-        if not cookies or not await _test_session(cookies):
-            byetech_status = "sessao_expirada"
-            byetech_msg    = "Sessão Byetech expirada — entrega enfileirada para retry"
-            _queue_byetech_update(contrato_id, data, c.cliente_cpf_cnpj, placa)
+        if not _playwright_ok:
+            # Render: Playwright não disponível — enfileira no banco para processamento local
+            byetech_status = "enfileirado"
+            byetech_msg    = "Playwright indisponível neste servidor — entrega salva na fila. Rode processar_pendentes.py localmente."
+            await _queue_byetech_update(contrato_id, data, c.cliente_cpf_cnpj, placa, c.cliente_nome or "")
         else:
-            try:
-                ok = await asyncio.wait_for(
-                    update_delivery_by_cpf(
-                        cpf_raw=c.cliente_cpf_cnpj, data_entrega=data, placa=placa
-                    ),
-                    timeout=20.0,
-                )
-                if ok:
-                    byetech_status = "ok"
-                    byetech_msg    = "Byetech atualizado com sucesso"
-                else:
-                    byetech_status = "erro"
-                    byetech_msg    = "PATCH retornou falha — verifique manualmente no Byetech"
-                    _queue_byetech_update(contrato_id, data, c.cliente_cpf_cnpj, placa)
-            except asyncio.TimeoutError:
-                byetech_status = "timeout"
-                byetech_msg    = "Byetech demorou (timeout) — atualização enfileirada"
-                _queue_byetech_update(contrato_id, data, c.cliente_cpf_cnpj, placa)
-            except Exception as e:
-                err = str(e)
-                if "expirada" in err.lower() or "2FA" in err or "401" in err:
-                    byetech_status = "sessao_expirada"
-                    byetech_msg    = "Sessão expirada — entrega enfileirada para retry"
-                else:
-                    byetech_status = "erro"
-                    byetech_msg    = err[:120]
-                _queue_byetech_update(contrato_id, data, c.cliente_cpf_cnpj, placa)
+            cookies = _load_session_from_disk()
+            if not cookies or not await _test_session(cookies):
+                byetech_status = "sessao_expirada"
+                byetech_msg    = "Sessão Byetech expirada — entrega enfileirada para retry"
+                await _queue_byetech_update(contrato_id, data, c.cliente_cpf_cnpj, placa, c.cliente_nome or "")
+            else:
+                try:
+                    ok = await asyncio.wait_for(
+                        update_delivery_by_cpf(
+                            cpf_raw=c.cliente_cpf_cnpj, data_entrega=data, placa=placa
+                        ),
+                        timeout=20.0,
+                    )
+                    if ok:
+                        byetech_status = "ok"
+                        byetech_msg    = "Byetech atualizado com sucesso"
+                    else:
+                        byetech_status = "erro"
+                        byetech_msg    = "PATCH retornou falha — verifique manualmente no Byetech"
+                        await _queue_byetech_update(contrato_id, data, c.cliente_cpf_cnpj, placa, c.cliente_nome or "")
+                except asyncio.TimeoutError:
+                    byetech_status = "timeout"
+                    byetech_msg    = "Byetech demorou (timeout) — atualização enfileirada"
+                    await _queue_byetech_update(contrato_id, data, c.cliente_cpf_cnpj, placa, c.cliente_nome or "")
+                except Exception as e:
+                    err = str(e)
+                    if "expirada" in err.lower() or "2FA" in err or "401" in err:
+                        byetech_status = "sessao_expirada"
+                        byetech_msg    = "Sessão expirada — entrega enfileirada para retry"
+                    else:
+                        byetech_status = "erro"
+                        byetech_msg    = err[:120]
+                    await _queue_byetech_update(contrato_id, data, c.cliente_cpf_cnpj, placa, c.cliente_nome or "")
 
     return {
         "ok":             True,
@@ -305,127 +316,145 @@ async def marcar_entregue(contrato_id: str, body: EntregarBody, db: AsyncSession
     }
 
 
-# ── Fila de atualizações Byetech pendentes (persistida em disco) ──────────
-import json as _json
+# ── Fila de atualizações Byetech pendentes (persistida no banco de dados) ──
+# Render não tem Playwright: gravamos no DB e a máquina local processa via
+# GET /api/byetech/pendentes → POST /api/byetech/pendentes/{id}/done
 
-_PENDING_FILE = os.getenv("PENDING_FILE", os.path.join(os.path.dirname(__file__), "..", ".byetech_pending.json"))
-
-
-def _load_pending() -> list[dict]:
+async def _queue_byetech_update(db_contrato_id: str, data: datetime,
+                                cpf: str, placa: Optional[str],
+                                cliente_nome: str = ""):
+    """Enfileira uma atualização Byetech no banco (sobrevive a deploys)."""
     try:
-        if os.path.exists(_PENDING_FILE):
-            with open(_PENDING_FILE, encoding="utf-8") as f:
-                items = _json.load(f)
-            # Reconverte data de string para datetime
-            for item in items:
-                if isinstance(item.get("data"), str):
-                    item["data"] = datetime.fromisoformat(item["data"])
-            return items
-    except Exception:
-        pass
-    return []
-
-
-def _save_pending(items: list[dict]):
-    try:
-        serializable = []
-        for item in items:
-            d = dict(item)
-            if isinstance(d.get("data"), datetime):
-                d["data"] = d["data"].isoformat()
-            serializable.append(d)
-        with open(_PENDING_FILE, "w", encoding="utf-8") as f:
-            _json.dump(serializable, f, ensure_ascii=False)
+        async with SessionLocal() as s:
+            # Remove duplicata se já existir pendente para o mesmo contrato
+            from sqlalchemy import delete
+            await s.execute(
+                delete(ByetechPendente).where(
+                    ByetechPendente.contrato_id == db_contrato_id,
+                    ByetechPendente.processado_em.is_(None),
+                    ByetechPendente.tipo == "entrega",
+                )
+            )
+            p = ByetechPendente(
+                contrato_id=db_contrato_id,
+                cliente_nome=cliente_nome,
+                cliente_cpf=cpf,
+                placa=placa,
+                data_entrega=data,
+                tipo="entrega",
+            )
+            s.add(p)
+            await s.commit()
+            logger.warning(f"[Byetech] {db_contrato_id} enfileirado no banco para processamento local")
     except Exception as e:
-        logger.warning(f"[Byetech] Não foi possível salvar fila pendente: {e}")
+        logger.error(f"[Byetech] Falha ao enfileirar {db_contrato_id}: {e}")
 
 
-def _queue_byetech_update(db_contrato_id: str, data: datetime,
-                          cpf: str, placa: Optional[str]):
-    """Enfileira uma atualização Byetech persistindo em disco."""
-    items = _load_pending()
-    items = [p for p in items if p["db_id"] != db_contrato_id]  # remove duplicata
-    items.append({"db_id": db_contrato_id, "data": data, "cpf": cpf, "placa": placa})
-    _save_pending(items)
-    logger.warning(f"[Byetech] {db_contrato_id} enfileirado ({len(items)} pendente(s))")
-
-
-def _get_pending_count() -> int:
-    return len(_load_pending())
+async def _get_pending_count() -> int:
+    try:
+        async with SessionLocal() as s:
+            result = await s.execute(
+                select(func.count()).select_from(ByetechPendente)
+                .where(ByetechPendente.processado_em.is_(None))
+            )
+            return result.scalar() or 0
+    except Exception:
+        return 0
 
 
 async def _flush_byetech_pending():
-    """Processa todas as atualizações pendentes após sync com sessão válida."""
-    items = _load_pending()
+    """Processa todas as atualizações pendentes quando Playwright estiver disponível."""
+    try:
+        from app.scrapers.byetech_crm import update_delivery_by_cpf
+    except ImportError:
+        logger.warning("[Byetech] Playwright não disponível — pendentes aguardam processamento local")
+        return
+
+    async with SessionLocal() as s:
+        res = await s.execute(
+            select(ByetechPendente)
+            .where(ByetechPendente.processado_em.is_(None))
+            .order_by(ByetechPendente.criado_em)
+        )
+        items = res.scalars().all()
+
     if not items:
         return
-    from app.scrapers.byetech_crm import update_delivery_by_cpf
+
     logger.info(f"[Byetech] Processando {len(items)} pendente(s)...")
-    done = []
-    for item in list(items):
+    for item in items:
         try:
             ok = await update_delivery_by_cpf(
-                cpf_raw=item["cpf"],
-                data_entrega=item["data"] if isinstance(item["data"], datetime)
-                             else datetime.fromisoformat(item["data"]),
-                placa=item.get("placa"),
+                cpf_raw=item.cliente_cpf,
+                data_entrega=item.data_entrega,
+                placa=item.placa,
             )
+            async with SessionLocal() as s:
+                res2 = await s.execute(select(ByetechPendente).where(ByetechPendente.id == item.id))
+                p = res2.scalar_one_or_none()
+                if p:
+                    if ok:
+                        p.processado_em = datetime.utcnow()
+                        p.erro_ultimo = None
+                    else:
+                        p.tentativas = (p.tentativas or 0) + 1
+                        p.erro_ultimo = "update retornou False"
+                    await s.commit()
             if ok:
-                done.append(item["db_id"])
-                logger.info(f"[Byetech] Pendente OK: {item['db_id']}")
+                logger.info(f"[Byetech] Pendente OK: {item.contrato_id}")
             else:
-                logger.error(f"[Byetech] Pendente falhou: {item['db_id']}")
+                logger.error(f"[Byetech] Pendente falhou: {item.contrato_id}")
         except Exception as e:
-            logger.error(f"[Byetech] Erro pendente {item['db_id']}: {e}")
-    # Salva apenas os que ainda falharam
-    items = [p for p in items if p["db_id"] not in done]
-    _save_pending(items)
-    if done:
-        logger.info(f"[Byetech] {len(done)} pendente(s) processado(s) com sucesso")
+            logger.error(f"[Byetech] Erro pendente {item.contrato_id}: {e}")
+            async with SessionLocal() as s:
+                res2 = await s.execute(select(ByetechPendente).where(ByetechPendente.id == item.id))
+                p = res2.scalar_one_or_none()
+                if p:
+                    p.tentativas = (p.tentativas or 0) + 1
+                    p.erro_ultimo = str(e)[:200]
+                    await s.commit()
 
 
 async def _update_byetech_crm(db_contrato_id: str, data: datetime):
     """
     Atualiza entrega_definitivo no Byetech CRM.
-    Se sessão expirada, enfileira para retry no próximo sync.
+    Se Playwright indisponível ou sessão expirada, enfileira no banco para retry local.
     """
+    async with SessionLocal() as s:
+        res = await s.execute(select(Contrato).where(Contrato.id == db_contrato_id))
+        c = res.scalar_one_or_none()
+    if not c:
+        logger.error(f"[Byetech] Contrato {db_contrato_id} não encontrado no banco")
+        return
+    if not c.cliente_cpf_cnpj:
+        logger.error(f"[Byetech] Contrato {db_contrato_id} sem CPF — impossível atualizar")
+        return
+
+    placa = c.placa if c.placa and str(c.placa).lower() not in ("nan", "n/a", "") else None
+
     try:
         from app.scrapers.byetech_crm import update_delivery_by_cpf
+    except ImportError:
+        logger.warning(f"[Byetech] Playwright indisponível — {db_contrato_id} enfileirado para retry local")
+        await _queue_byetech_update(db_contrato_id, data, c.cliente_cpf_cnpj, placa, c.cliente_nome or "")
+        return
 
-        async with SessionLocal() as s:
-            res = await s.execute(select(Contrato).where(Contrato.id == db_contrato_id))
-            c = res.scalar_one_or_none()
-        if not c:
-            logger.error(f"[Byetech] Contrato {db_contrato_id} não encontrado no banco")
-            return
-        if not c.cliente_cpf_cnpj:
-            logger.error(f"[Byetech] Contrato {db_contrato_id} sem CPF — impossível atualizar")
-            return
-
-        placa = c.placa if c.placa and str(c.placa).lower() not in ("nan", "n/a", "") else None
-        try:
-            ok = await update_delivery_by_cpf(
-                cpf_raw=c.cliente_cpf_cnpj,
-                data_entrega=data,
-                placa=placa,
-            )
-        except Exception as e:
-            err = str(e)
-            if "2FA_REQUIRED" in err or "expirada" in err.lower() or "401" in err:
-                logger.warning(f"[Byetech] Sessão expirada — {db_contrato_id} enfileirado para retry")
-                _queue_byetech_update(db_contrato_id, data, c.cliente_cpf_cnpj, placa)
-            else:
-                raise
-            return
-
-        if ok:
-            logger.info(f"✅ [Byetech] {c.cliente_nome} → Definitivo Entregue em {data.date()}")
-        else:
-            logger.error(f"[Byetech] Falha ao atualizar {db_contrato_id}")
-            _queue_byetech_update(db_contrato_id, data, c.cliente_cpf_cnpj, placa)
+    try:
+        ok = await update_delivery_by_cpf(cpf_raw=c.cliente_cpf_cnpj, data_entrega=data, placa=placa)
     except Exception as e:
-        import traceback
-        logger.error(f"[Byetech] Erro ao atualizar {db_contrato_id}: {e}\n{traceback.format_exc()}")
+        err = str(e)
+        if "2FA_REQUIRED" in err or "expirada" in err.lower() or "401" in err:
+            logger.warning(f"[Byetech] Sessão expirada — {db_contrato_id} enfileirado para retry")
+        else:
+            logger.error(f"[Byetech] Erro ao atualizar {db_contrato_id}: {e}")
+        await _queue_byetech_update(db_contrato_id, data, c.cliente_cpf_cnpj, placa, c.cliente_nome or "")
+        return
+
+    if ok:
+        logger.info(f"[Byetech] {c.cliente_nome} marcado Definitivo Entregue em {data.date()}")
+    else:
+        logger.error(f"[Byetech] Falha ao atualizar {db_contrato_id} — enfileirado")
+        await _queue_byetech_update(db_contrato_id, data, c.cliente_cpf_cnpj, placa, c.cliente_nome or "")
 
 
 @app.post("/api/contratos/{contrato_id}/email-unidas")
@@ -610,8 +639,74 @@ async def submit_2fa(body: TwoFABody):
 @app.get("/api/sync/status")
 async def sync_status():
     state = get_sync_state()
-    state["byetech_pending"] = _get_pending_count()
+    state["byetech_pending"] = await _get_pending_count()
     return state
+
+
+# ── API: Fila Byetech pendentes ──────────────────────────
+@app.get("/api/byetech/pendentes")
+async def listar_pendentes(db: AsyncSession = Depends(get_db)):
+    """
+    Lista todas as atualizações pendentes no Byetech CRM.
+    Usado pelo script processar_pendentes.py para processar localmente.
+    """
+    res = await db.execute(
+        select(ByetechPendente)
+        .where(ByetechPendente.processado_em.is_(None))
+        .order_by(ByetechPendente.criado_em)
+    )
+    items = res.scalars().all()
+    return {
+        "total": len(items),
+        "pendentes": [
+            {
+                "id":           p.id,
+                "contrato_id":  p.contrato_id,
+                "cliente_nome": p.cliente_nome,
+                "cliente_cpf":  p.cliente_cpf,
+                "placa":        p.placa,
+                "data_entrega": p.data_entrega.isoformat() if p.data_entrega else None,
+                "tipo":         p.tipo,
+                "novo_status":  p.novo_status,
+                "tentativas":   p.tentativas,
+                "erro_ultimo":  p.erro_ultimo,
+                "criado_em":    p.criado_em.isoformat() if p.criado_em else None,
+            }
+            for p in items
+        ],
+    }
+
+
+class MarcarPendenteBody(BaseModel):
+    sucesso: bool
+    erro: Optional[str] = None
+
+
+@app.post("/api/byetech/pendentes/{pendente_id}/done")
+async def marcar_pendente_processado(
+    pendente_id: int,
+    body: MarcarPendenteBody,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Marca um pendente como processado (chamado pelo script local após atualizar Byetech).
+    """
+    res = await db.execute(select(ByetechPendente).where(ByetechPendente.id == pendente_id))
+    p = res.scalar_one_or_none()
+    if not p:
+        raise HTTPException(404, "Pendente não encontrado")
+
+    if body.sucesso:
+        p.processado_em = datetime.utcnow()
+        p.erro_ultimo = None
+        logger.info(f"[Byetech] Pendente {pendente_id} ({p.contrato_id}) marcado como processado")
+    else:
+        p.tentativas = (p.tentativas or 0) + 1
+        p.erro_ultimo = (body.erro or "erro desconhecido")[:200]
+        logger.warning(f"[Byetech] Pendente {pendente_id} falhou: {p.erro_ultimo}")
+
+    await db.commit()
+    return {"ok": True}
 
 
 @app.get("/api/byetech/sessao-ok")
