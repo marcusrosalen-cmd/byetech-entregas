@@ -21,13 +21,36 @@ from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import init_db, get_db, SessionLocal, Contrato, HistoricoStatus, AlertaEnviado
-from app.services.scheduler import start_scheduler
 from app.services.sync_service import (
-    get_sync_state, run_full_sync, provide_twofa, set_sync_state,
-    run_metabase_sync, run_gwm_lm_validation, run_signanddrive_sync,
+    get_sync_state, provide_twofa, set_sync_state,
 )
-from app.scrapers.movida import parse_movida_spreadsheet, get_unmapped_columns
-from app.services.email_service import send_unidas_confirmation
+
+# Imports opcionais — não travam o servidor se não estiverem disponíveis
+try:
+    from app.services.scheduler import start_scheduler
+    _HAS_SCHEDULER = True
+except Exception as _e:
+    _HAS_SCHEDULER = False
+    logging.getLogger("main").warning(f"Scheduler indisponível: {_e}")
+
+try:
+    from app.services.sync_service import run_full_sync, run_metabase_sync, run_gwm_lm_validation, run_signanddrive_sync
+    _HAS_SYNC = True
+except Exception as _e:
+    _HAS_SYNC = False
+    logging.getLogger("main").warning(f"Sync service indisponível: {_e}")
+
+try:
+    from app.scrapers.movida import parse_movida_spreadsheet, get_unmapped_columns
+    _HAS_MOVIDA = True
+except Exception as _e:
+    _HAS_MOVIDA = False
+
+try:
+    from app.services.email_service import send_unidas_confirmation
+    _HAS_EMAIL = True
+except Exception as _e:
+    _HAS_EMAIL = False
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("main")
@@ -35,10 +58,25 @@ logger = logging.getLogger("main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
-    start_scheduler()
-    # Sync Metabase no startup (pega contratos de hoje e ontem caso o job das 09:00 tenha sido perdido)
-    asyncio.create_task(_startup_metabase_sync())
+    # Banco de dados — crítico, mas trata erro sem derrubar o servidor
+    try:
+        await init_db()
+        logger.info("✅ Banco de dados inicializado")
+    except Exception as e:
+        logger.error(f"❌ Erro ao inicializar banco: {e}")
+
+    # Scheduler — opcional
+    if _HAS_SCHEDULER:
+        try:
+            start_scheduler()
+            logger.info("✅ Scheduler iniciado")
+        except Exception as e:
+            logger.error(f"❌ Scheduler não iniciou: {e}")
+
+    # Sync Metabase em background — falha silenciosa
+    if _HAS_SYNC:
+        asyncio.create_task(_startup_metabase_sync())
+
     logger.info("🚀 Byetech Entregas iniciado")
     yield
     logger.info("Encerrando...")
@@ -46,20 +84,21 @@ async def lifespan(app: FastAPI):
 
 async def _startup_metabase_sync():
     """Roda Metabase sync no startup para garantir dados atualizados."""
-    import asyncio as _asyncio
-    await _asyncio.sleep(3)  # aguarda o servidor inicializar
+    await asyncio.sleep(5)
     try:
         result = await run_metabase_sync(full=False)
-        logger.info(f"[startup] Metabase sync: {result['importados']} contratos")
+        logger.info(f"[startup] Metabase sync: {result.get('importados', 0)} contratos")
     except Exception as e:
-        logger.error(f"[startup] Metabase sync erro: {e}")
+        logger.warning(f"[startup] Metabase sync não disponível: {e}")
 
 
 app = FastAPI(title="Byetech Entregas", lifespan=lifespan)
 
 # Static files e templates
 BASE_DIR = os.path.dirname(__file__)
-app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
+_static_dir = os.path.join(BASE_DIR, "static")
+if os.path.isdir(_static_dir):
+    app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 
@@ -536,14 +575,14 @@ async def entregas_hoje(db: AsyncSession = Depends(get_db)):
 # ── API: Sync ─────────────────────────────────────────────
 @app.post("/api/sync")
 async def trigger_sync():
+    if not _HAS_SYNC:
+        return {"ok": False, "message": "Sync não disponível neste ambiente (rode localmente)"}
     state = get_sync_state()
     if state["status"] in ("running", "needs_2fa"):
         return {"ok": False, "message": "Sync já em andamento", "needs_2fa": False}
 
-    # Roda em background — popup de 2FA aparece quando status mudar para "needs_2fa"
     async def _sync_and_flush():
         await run_full_sync()
-        # Após sync bem-sucedido, tenta processar pendentes do Byetech
         await _flush_byetech_pending()
 
     asyncio.create_task(_sync_and_flush())
@@ -647,20 +686,21 @@ async def _wait_twofa_renovar() -> str:
 # ── API: Movida ───────────────────────────────────────────
 @app.post("/api/movida/preview")
 async def movida_preview(file: UploadFile = File(...)):
+    if not _HAS_MOVIDA:
+        raise HTTPException(503, "Importação Movida não disponível neste ambiente")
     content = await file.read()
     try:
         info = get_unmapped_columns(content, file.filename or "file.xlsx")
         contratos = parse_movida_spreadsheet(content, file.filename or "file.xlsx")
-        return {
-            **info,
-            "total": len(contratos),
-        }
+        return {**info, "total": len(contratos)}
     except Exception as e:
         raise HTTPException(400, str(e))
 
 
 @app.post("/api/movida/import")
 async def movida_import(file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
+    if not _HAS_MOVIDA:
+        raise HTTPException(503, "Importação Movida não disponível neste ambiente")
     content = await file.read()
     try:
         contratos = parse_movida_spreadsheet(content, file.filename or "file.xlsx")
