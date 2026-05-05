@@ -18,7 +18,8 @@ import json
 import httpx
 from datetime import datetime
 from typing import Optional
-from playwright.sync_api import sync_playwright
+# Playwright importado de forma LAZY (dentro de _login_via_subprocess)
+# para que o módulo possa ser importado no Render (sem Playwright instalado).
 from dotenv import load_dotenv
 
 logger = logging.getLogger("byetech_crm")
@@ -43,6 +44,19 @@ PHASE_NAMES = {
 # Cache da sessão — em memória e em disco para sobreviver reinicializações
 _session_cookies: Optional[dict] = None
 _session_lock = asyncio.Lock()
+
+# Sessão recebida remotamente (enviada pelo servidor local via /api/byetech/push-session)
+_remote_session: Optional[dict] = None
+
+
+def set_remote_session(cookies: dict):
+    """Injeta cookies de sessão recebidos via API (enviados pela máquina local)."""
+    global _session_cookies, _remote_session
+    _remote_session = cookies
+    _session_cookies = cookies
+    # Persiste em disco para sobreviver reinícios do processo
+    _save_session(cookies)
+    logger.info("[Byetech] Sessão remota recebida e armazenada")
 
 SESSION_FILE = os.getenv(
     "SESSION_FILE",
@@ -185,7 +199,8 @@ async def get_session(twofa_callback=None) -> dict:
     Retorna sessão válida. Ordem de prioridade:
     1. Cache em memória (rápido)
     2. Cookies salvos em disco — testa se ainda são válidos (evita 2FA desnecessário)
-    3. Login completo + 2FA — só quando a sessão realmente expirou
+    3. Login completo + 2FA via Playwright — só quando a sessão realmente expirou
+       (no Render, Playwright não existe → lança RuntimeError com instrução clara)
     """
     global _session_cookies
     async with _session_lock:
@@ -204,8 +219,17 @@ async def get_session(twofa_callback=None) -> dict:
             else:
                 logger.info("Sessão expirada — fazendo novo login + 2FA")
 
-        # 3. Login + 2FA
-        _session_cookies = await _login_and_get_cookies(twofa_callback)
+        # 3. Login + 2FA (requer Playwright — só funciona localmente)
+        try:
+            _session_cookies = await _login_and_get_cookies(twofa_callback)
+        except Exception as e:
+            if "playwright" in str(e).lower() or "No module named" in str(e):
+                raise RuntimeError(
+                    "SESSAO_BYETECH_EXPIRADA: Playwright não disponível neste ambiente. "
+                    "Execute localmente: python _refresh_byetech_session.py "
+                    "e depois POST /api/byetech/push-session para sincronizar com o Render."
+                ) from e
+            raise
         _save_session(_session_cookies)
         return _session_cookies
 
@@ -526,6 +550,55 @@ async def update_phase_by_cpf(
     return True, f"ok:{phase_name}"
 
 
+async def _lookup_contrato_por_cpf(cpf_norm: str, digits: str) -> Optional[dict]:
+    """
+    Busca um contrato na API Byetech pelo CPF quando o mapa local não existe.
+    Retorna um dict compatível com as entradas do cpf_map ou None.
+    """
+    try:
+        cookies = await get_session()
+        headers = _make_headers(cookies)
+        async with httpx.AsyncClient(follow_redirects=True, timeout=20) as client:
+            # Byetech permite filtrar por CPF via query string
+            for cpf_try in [cpf_norm, digits, cpf_norm.lstrip("0")]:
+                resp = await client.get(
+                    f"{API_URL}/api/contracts",
+                    params={"cpfCnpj": cpf_try, "per_page": 5},
+                    headers=headers,
+                    cookies=cookies,
+                )
+                if resp.status_code != 200:
+                    continue
+                data = resp.json()
+                items = data.get("data", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+                for item in items:
+                    cpf_api = re.sub(r"\D", "", item.get("cpfCnpj", item.get("cpf_cnpj", "")) or "")
+                    if cpf_api.lstrip("0") == cpf_norm.lstrip("0") or cpf_api == digits:
+                        cid = item.get("id") or item.get("contract_id")
+                        if cid:
+                            logger.info(f"[Byetech] CPF {cpf_norm[:6]}... → contrato {cid} via API")
+                            return {
+                                "id": str(cid),
+                                "placa_carro": item.get("placaCarro") or item.get("placa_carro"),
+                                "retirada_provisorio": item.get("retiradaProvisorio"),
+                                "km_excedente_value": item.get("kmExcedenteValue", "0.00"),
+                                "frequency_of_use": item.get("frequencyOfUse"),
+                                "usage_type": item.get("usageType"),
+                                "is_reversal": item.get("isReversal", 0),
+                                "reversal_value": item.get("reversalValue"),
+                                "franquia_coparticipacao": item.get("franquiaCoparticipacao", "0"),
+                                "cobertura_danos_materiais": item.get("coberturaDanosMateriais", "--"),
+                                "cobertura_danos_corporais": item.get("coberturaDanosCorporais", "--"),
+                                "is_active": item.get("isActive", 1),
+                                "is_extended": item.get("isExtended", 0),
+                                "extension_months": item.get("extensionMonths"),
+                                "automatic_send_link": item.get("automaticSendLink", 1),
+                            }
+    except Exception as e:
+        logger.error(f"[Byetech] Erro ao buscar contrato por CPF via API: {e}")
+    return None
+
+
 # ── Atualizar data de entrega via API ─────────────────────
 async def update_delivery_by_cpf(
     cpf_raw: str,
@@ -552,21 +625,25 @@ async def update_delivery_by_cpf(
     else:
         cpf_norm = digits.zfill(11)
 
-    # Carrega mapa CPF
+    # Carrega mapa CPF (arquivo local) ou busca na API como fallback
     if cpf_map_file is None:
         cpf_map_file = str(Path(__file__).parent.parent.parent / ".byetech_cpf_map.json")
-    if not os.path.exists(cpf_map_file):
-        logger.error("[Byetech] Mapa CPF não encontrado — execute scraper completo primeiro")
-        return False
 
-    with open(cpf_map_file, encoding="utf-8") as f:
-        cpf_map = json.load(f)
+    entry = None
+    if os.path.exists(cpf_map_file):
+        with open(cpf_map_file, encoding="utf-8") as f:
+            cpf_map = json.load(f)
+        entry = (cpf_map.get(cpf_norm)
+                 or cpf_map.get(digits)
+                 or cpf_map.get(cpf_norm + "0"))
 
-    entry = (cpf_map.get(cpf_norm)
-             or cpf_map.get(digits)
-             or cpf_map.get(cpf_norm + "0"))
+    # Fallback: busca o contrato diretamente na API Byetech pelo CPF
     if not entry:
-        logger.error(f"[Byetech] CPF {cpf_norm!r} não encontrado no mapa CPF")
+        logger.info(f"[Byetech] Mapa CPF indisponível — buscando na API para CPF {cpf_norm[:6]}...")
+        entry = await _lookup_contrato_por_cpf(cpf_norm, digits)
+
+    if not entry:
+        logger.error(f"[Byetech] CPF {cpf_norm!r} não encontrado no mapa CPF nem na API")
         return False
 
     contract_id = entry.get("id")

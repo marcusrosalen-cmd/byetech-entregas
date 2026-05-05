@@ -29,6 +29,32 @@ def get_scheduler() -> AsyncIOScheduler:
     return _scheduler
 
 
+async def _push_session_to_render():
+    """Empurra a sessão Byetech para o Render após sync local bem-sucedido."""
+    import os, json, httpx
+    render_url    = os.getenv("RENDER_SERVICE_URL", "https://byetech-entregas.onrender.com")
+    push_secret   = os.getenv("SESSION_PUSH_SECRET", "byetech-local")
+    session_file  = os.path.join(os.path.dirname(__file__), "..", "..", ".byetech_session.json")
+    if not os.path.exists(session_file):
+        logger.warning("[Scheduler] .byetech_session.json não encontrado — push de sessão ignorado")
+        return
+    try:
+        with open(session_file, encoding="utf-8") as f:
+            cookies = json.load(f)
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                f"{render_url}/api/byetech/push-session",
+                json={"cookies": cookies, "secret": push_secret},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                logger.info(f"[Scheduler] Sessão enviada ao Render: {data.get('message','ok')}")
+            else:
+                logger.warning(f"[Scheduler] Push sessão falhou {resp.status_code}: {resp.text[:200]}")
+    except Exception as e:
+        logger.warning(f"[Scheduler] Push sessão erro: {e}")
+
+
 async def job_sync_all():
     """Job diário: scraping completo. Só roda se sessão Byetech estiver válida."""
     logger.info("⏰ [scheduler] Verificando sessão Byetech antes do sync...")
@@ -40,7 +66,6 @@ async def job_sync_all():
             "⏰ [scheduler] Sessão Byetech EXPIRADA — sync automático cancelado. "
             "Acesse o portal e clique em '🔑 Renovar sessão' para reativar."
         )
-        # Notifica Slack
         try:
             from app.services.slack_service import get_client, get_or_create_channel
             channel = await get_or_create_channel()
@@ -61,6 +86,8 @@ async def job_sync_all():
     try:
         result = await run_full_sync()
         logger.info(f"✅ [scheduler] Sync concluída: {result}")
+        # Após sync bem-sucedido, empurra sessão para o Render
+        await _push_session_to_render()
     except Exception as e:
         logger.error(f"❌ [scheduler] Erro no sync: {e}")
 

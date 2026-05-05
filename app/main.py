@@ -720,6 +720,46 @@ async def byetech_sessao_ok():
     return {"ok": ok, "motivo": None if ok else "expirada"}
 
 
+class PushSessionBody(BaseModel):
+    cookies: dict
+    secret: str = ""
+
+
+@app.post("/api/byetech/push-session")
+async def push_byetech_session(body: PushSessionBody):
+    """
+    Recebe cookies de sessão do Byetech CRM enviados pela máquina local.
+    Permite que o Render use a sessão sem precisar de Playwright.
+
+    Uso (máquina local):
+      python push_session_render.py
+    """
+    _secret = os.getenv("SESSION_PUSH_SECRET", "byetech-local")
+    if body.secret != _secret:
+        raise HTTPException(401, "Secret inválido — configure SESSION_PUSH_SECRET no .env")
+
+    if not body.cookies:
+        raise HTTPException(400, "Cookies vazios")
+
+    from app.scrapers.byetech_crm import set_remote_session, _test_session
+    # Testa antes de aceitar
+    ok = await _test_session(body.cookies)
+    if not ok:
+        raise HTTPException(422, "Sessão inválida — cookies não autenticam na API Byetech")
+
+    set_remote_session(body.cookies)
+
+    # Processa pendentes imediatamente com a nova sessão
+    asyncio.create_task(_flush_byetech_pending())
+    logger.info("[Byetech] Sessão remota recebida — processando pendentes...")
+
+    pending = await _get_pending_count()
+    return {
+        "ok": True,
+        "message": f"Sessão válida recebida. {pending} pendente(s) sendo processados em background.",
+    }
+
+
 @app.post("/api/sync/reset-session")
 async def reset_byetech_session():
     """Limpa a sessão cacheada do Byetech — próxima sync vai pedir 2FA."""
