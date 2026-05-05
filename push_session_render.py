@@ -39,21 +39,21 @@ def main():
         print("[ERRO] Arquivo de sessão vazio.")
         sys.exit(1)
 
-    print(f"Enviando sessão para {ENDPOINT}...")
+    print(f"Enviando sessao para {ENDPOINT}...")
     try:
         resp = httpx.post(
             ENDPOINT,
             json={"cookies": cookies, "secret": PUSH_SECRET},
-            timeout=30,
+            timeout=60,
         )
         data = resp.json()
         if resp.status_code == 200 and data.get("ok"):
-            print(f"✅ Sessão enviada com sucesso! {data.get('message', '')}")
+            print(f"OK - {data.get('message', 'Sessao enviada com sucesso!')}")
         else:
-            print(f"❌ Erro {resp.status_code}: {data}")
+            print(f"ERRO {resp.status_code}: {data}")
             sys.exit(1)
     except Exception as e:
-        print(f"❌ Falha ao conectar: {e}")
+        print(f"Falha ao conectar: {e}")
         sys.exit(1)
 
 

@@ -742,21 +742,24 @@ async def push_byetech_session(body: PushSessionBody):
         raise HTTPException(400, "Cookies vazios")
 
     from app.scrapers.byetech_crm import set_remote_session, _test_session
-    # Testa antes de aceitar
-    ok = await _test_session(body.cookies)
-    if not ok:
-        raise HTTPException(422, "Sessão inválida — cookies não autenticam na API Byetech")
 
+    # Armazena imediatamente (responde rápido) e valida + processa em background
     set_remote_session(body.cookies)
-
-    # Processa pendentes imediatamente com a nova sessão
-    asyncio.create_task(_flush_byetech_pending())
-    logger.info("[Byetech] Sessão remota recebida — processando pendentes...")
-
     pending = await _get_pending_count()
+
+    async def _validar_e_processar():
+        ok = await _test_session(body.cookies)
+        if ok:
+            logger.info("[Byetech] Sessão remota validada — processando pendentes...")
+            await _flush_byetech_pending()
+        else:
+            logger.warning("[Byetech] Sessão remota inválida ou expirada")
+
+    asyncio.create_task(_validar_e_processar())
+
     return {
         "ok": True,
-        "message": f"Sessão válida recebida. {pending} pendente(s) sendo processados em background.",
+        "message": f"Sessão recebida. Validando e processando {pending} pendente(s) em background.",
     }
 
 
