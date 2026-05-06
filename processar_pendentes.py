@@ -45,7 +45,7 @@ async def processar(pendentes: list[dict], dry_run: bool = False):
 
     print(f"\n{'='*60}")
     print(f"  {len(pendentes)} entrega(s) pendente(s) para atualizar no Byetech")
-    print(f"{'='*60}\n")
+    print("="*60 + "\n")
 
     # Verifica sessão Byetech
     try:
@@ -53,17 +53,17 @@ async def processar(pendentes: list[dict], dry_run: bool = False):
             update_delivery_by_cpf, _load_session_from_disk, _test_session
         )
     except ImportError:
-        print("❌ Playwright não instalado. Execute: pip install playwright && playwright install chromium")
+        print("ERRO: Playwright nao instalado. Execute: pip install playwright && playwright install chromium")
         sys.exit(1)
 
     cookies = _load_session_from_disk()
     if not cookies or not await _test_session(cookies):
-        print("❌ Sessão Byetech expirada.")
+        print("ERRO: Sessao Byetech expirada.")
         print("   Acesse o portal local (python -m uvicorn app.main:app --port 8001)")
-        print("   e clique em '🔑 Renovar sessão' para reativar.")
+        print("   e clique em 'Renovar sessao' para reativar.")
         sys.exit(1)
 
-    print("✅ Sessão Byetech válida\n")
+    print("OK - Sessao Byetech valida\n")
 
     ok_count = 0
     fail_count = 0
@@ -94,15 +94,15 @@ async def processar(pendentes: list[dict], dry_run: bool = False):
                 placa=placa,
             )
             if ok:
-                print(f"  ✅ Byetech atualizado com sucesso")
+                print(f"  OK - Byetech atualizado com sucesso")
                 await marcar_done(pid, sucesso=True)
                 ok_count += 1
             else:
-                print(f"  ⚠️  update_delivery retornou False — verifique manualmente")
+                print(f"  AVISO: update_delivery retornou False - verifique manualmente")
                 await marcar_done(pid, sucesso=False, erro="update_delivery retornou False")
                 fail_count += 1
         except Exception as e:
-            print(f"  ❌ Erro: {e}")
+            print(f"  ERRO: {e}")
             await marcar_done(pid, sucesso=False, erro=str(e)[:200])
             fail_count += 1
 
@@ -121,7 +121,7 @@ async def main():
     parser.add_argument("--id", type=int, help="Processa apenas o pendente com este ID")
     args = parser.parse_args()
 
-    print(f"🔗 Conectando em {RENDER_URL}...")
+    print(f"Conectando em {RENDER_URL}...")
     pendentes = await listar_pendentes()
 
     if args.id:

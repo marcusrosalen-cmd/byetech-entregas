@@ -512,17 +512,21 @@ async def update_phase_by_cpf(
     else:
         cpf_norm = digits.zfill(11)
 
-    # Carrega mapa CPF
+    # Carrega mapa CPF (local) ou busca na API como fallback
     cpf_map_file = os.getenv("CPF_MAP_FILE", str(_Path(__file__).parent.parent.parent / ".byetech_cpf_map.json"))
-    if not os.path.exists(cpf_map_file):
-        return False, "mapa_cpf_ausente"
+    entry = None
+    if os.path.exists(cpf_map_file):
+        with open(cpf_map_file, encoding="utf-8") as f:
+            cpf_map = json.load(f)
+        entry = (cpf_map.get(cpf_norm)
+                 or cpf_map.get(digits)
+                 or cpf_map.get(cpf_norm + "0"))
 
-    with open(cpf_map_file, encoding="utf-8") as f:
-        cpf_map = json.load(f)
+    # Fallback: busca o contrato diretamente na API Byetech pelo CPF
+    if not entry:
+        logger.info(f"[Byetech] Mapa CPF indisponível — buscando na API para CPF {cpf_norm[:6]}...")
+        entry = await _lookup_contrato_por_cpf(cpf_norm, digits, twofa_callback)
 
-    entry = (cpf_map.get(cpf_norm)
-             or cpf_map.get(digits)
-             or cpf_map.get(cpf_norm + "0"))
     if not entry:
         return False, f"cpf_nao_encontrado:{cpf_norm}"
 
@@ -530,6 +534,7 @@ async def update_phase_by_cpf(
     if not contract_id:
         return False, f"id_ausente_no_mapa:{cpf_norm}"
 
+    # Sessão já foi obtida em _lookup_contrato_por_cpf; get_session retorna do cache
     cookies = await get_session(twofa_callback)
     headers = _make_headers(cookies)
 
@@ -550,16 +555,18 @@ async def update_phase_by_cpf(
     return True, f"ok:{phase_name}"
 
 
-async def _lookup_contrato_por_cpf(cpf_norm: str, digits: str) -> Optional[dict]:
+async def _lookup_contrato_por_cpf(cpf_norm: str, digits: str, twofa_callback=None) -> Optional[dict]:
     """
     Busca um contrato na API Byetech pelo CPF quando o mapa local não existe.
     Retorna um dict compatível com as entradas do cpf_map ou None.
+
+    Estrutura real da resposta: data → data → contracts → data (lista)
+    CPF real está em: item → order → client → num_cpf
     """
     try:
-        cookies = await get_session()
+        cookies = await get_session(twofa_callback)
         headers = _make_headers(cookies)
         async with httpx.AsyncClient(follow_redirects=True, timeout=20) as client:
-            # Byetech permite filtrar por CPF via query string
             for cpf_try in [cpf_norm, digits, cpf_norm.lstrip("0")]:
                 resp = await client.get(
                     f"{API_URL}/api/contracts",
@@ -570,29 +577,48 @@ async def _lookup_contrato_por_cpf(cpf_norm: str, digits: str) -> Optional[dict]
                 if resp.status_code != 200:
                     continue
                 data = resp.json()
-                items = data.get("data", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+
+                # Estrutura real: {"data": {"contracts": {"data": [...], "last_page": N}}}
+                nested = data.get("data") or {} if isinstance(data, dict) else {}
+                if isinstance(nested, dict):
+                    contracts_obj = nested.get("contracts") or {}
+                    items = contracts_obj.get("data", []) if isinstance(contracts_obj, dict) else []
+                elif isinstance(nested, list):
+                    items = nested
+                else:
+                    items = []
+
                 for item in items:
-                    cpf_api = re.sub(r"\D", "", item.get("cpfCnpj", item.get("cpf_cnpj", "")) or "")
+                    # CPF está em item.order.client.num_cpf
+                    order      = item.get("order") or {}
+                    client_obj = order.get("client") or {}
+                    cpf_api    = re.sub(r"\D", "", str(client_obj.get("num_cpf") or ""))
+                    if not cpf_api:
+                        # fallback: campos camelCase direto no item (versões antigas)
+                        cpf_api = re.sub(r"\D", "", str(
+                            item.get("cpfCnpj") or item.get("cpf_cnpj") or ""
+                        ))
+
                     if cpf_api.lstrip("0") == cpf_norm.lstrip("0") or cpf_api == digits:
                         cid = item.get("id") or item.get("contract_id")
                         if cid:
                             logger.info(f"[Byetech] CPF {cpf_norm[:6]}... → contrato {cid} via API")
                             return {
                                 "id": str(cid),
-                                "placa_carro": item.get("placaCarro") or item.get("placa_carro"),
-                                "retirada_provisorio": item.get("retiradaProvisorio"),
-                                "km_excedente_value": item.get("kmExcedenteValue", "0.00"),
-                                "frequency_of_use": item.get("frequencyOfUse"),
-                                "usage_type": item.get("usageType"),
-                                "is_reversal": item.get("isReversal", 0),
-                                "reversal_value": item.get("reversalValue"),
-                                "franquia_coparticipacao": item.get("franquiaCoparticipacao", "0"),
-                                "cobertura_danos_materiais": item.get("coberturaDanosMateriais", "--"),
-                                "cobertura_danos_corporais": item.get("coberturaDanosCorporais", "--"),
-                                "is_active": item.get("isActive", 1),
-                                "is_extended": item.get("isExtended", 0),
-                                "extension_months": item.get("extensionMonths"),
-                                "automatic_send_link": item.get("automaticSendLink", 1),
+                                "placa_carro":              item.get("placa_carro")               or item.get("placaCarro"),
+                                "retirada_provisorio":      item.get("retirada_provisorio")       or item.get("retiradaProvisorio"),
+                                "km_excedente_value":       item.get("km_excedente_value")        or item.get("kmExcedenteValue")        or "0.00",
+                                "frequency_of_use":         item.get("frequency_of_use")          or item.get("frequencyOfUse"),
+                                "usage_type":               item.get("usage_type")                or item.get("usageType"),
+                                "is_reversal":              item.get("is_reversal")               or item.get("isReversal")              or 0,
+                                "reversal_value":           item.get("reversal_value")            or item.get("reversalValue"),
+                                "franquia_coparticipacao":  item.get("franquia_coparticipacao")   or item.get("franquiaCoparticipacao")  or "0",
+                                "cobertura_danos_materiais":item.get("cobertura_danos_materiais") or item.get("coberturaDanosMateriais") or "--",
+                                "cobertura_danos_corporais":item.get("cobertura_danos_corporais") or item.get("coberturaDanosCorporais") or "--",
+                                "is_active":                item.get("is_active")                 or item.get("isActive")                or 1,
+                                "is_extended":              item.get("is_extended")               or item.get("isExtended")              or 0,
+                                "extension_months":         item.get("extension_months")          or item.get("extensionMonths"),
+                                "automatic_send_link":      item.get("automatic_send_link")       or item.get("automaticSendLink")       or 1,
                             }
     except Exception as e:
         logger.error(f"[Byetech] Erro ao buscar contrato por CPF via API: {e}")
@@ -640,7 +666,7 @@ async def update_delivery_by_cpf(
     # Fallback: busca o contrato diretamente na API Byetech pelo CPF
     if not entry:
         logger.info(f"[Byetech] Mapa CPF indisponível — buscando na API para CPF {cpf_norm[:6]}...")
-        entry = await _lookup_contrato_por_cpf(cpf_norm, digits)
+        entry = await _lookup_contrato_por_cpf(cpf_norm, digits, twofa_callback)
 
     if not entry:
         logger.error(f"[Byetech] CPF {cpf_norm!r} não encontrado no mapa CPF nem na API")
