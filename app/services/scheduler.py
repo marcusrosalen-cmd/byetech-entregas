@@ -56,38 +56,54 @@ async def _push_session_to_render():
 
 
 async def job_sync_all():
-    """Job diário: scraping completo. Só roda se sessão Byetech estiver válida."""
-    logger.info("⏰ [scheduler] Verificando sessão Byetech antes do sync...")
+    """
+    Job diário: scraping completo de todos os portais.
+    Roda independente do estado da sessao Byetech — se expirada, usa fallback do banco
+    e continua verificando Sign & Drive, Localiza e demais portais normalmente.
+    """
+    logger.info("⏰ [scheduler] Iniciando sync diario completo...")
 
-    from app.scrapers.byetech_crm import _load_session_from_disk, _test_session
-    cookies = _load_session_from_disk()
-    if not cookies or not await _test_session(cookies):
-        logger.warning(
-            "⏰ [scheduler] Sessão Byetech EXPIRADA — sync automático cancelado. "
-            "Acesse o portal e clique em '🔑 Renovar sessão' para reativar."
-        )
-        try:
-            from app.services.slack_service import get_client, get_or_create_channel
-            channel = await get_or_create_channel()
-            client = get_client()
-            await client.chat_postMessage(
-                channel=channel,
-                text=(
-                    "⚠️ *Sync automático cancelado — sessão Byetech expirada*\n"
-                    "Acesse o portal em *http://localhost:8001* e clique em "
-                    "*🔑 Renovar sessão* para reativar e processar as entregas pendentes."
-                ),
+    # Verifica sessao Byetech APENAS para log informativo — nao cancela o sync
+    try:
+        from app.scrapers.byetech_crm import _load_session_from_disk, _test_session
+        cookies = _load_session_from_disk()
+        if not cookies:
+            logger.warning(
+                "[scheduler] Sessao Byetech: sem arquivo de sessao — "
+                "contratos serao lidos do banco local."
             )
-        except Exception as e:
-            logger.warning(f"Aviso Slack sessão expirada: {e}")
-        return
+        else:
+            _sessao_ok = await _test_session(cookies)
+            if not _sessao_ok:
+                logger.warning(
+                    "[scheduler] Sessao Byetech EXPIRADA — sync continua usando banco local. "
+                    "Execute push_session_render.py para renovar."
+                )
+                try:
+                    from app.services.slack_service import get_client, get_or_create_channel
+                    channel = await get_or_create_channel()
+                    client = get_client()
+                    await client.chat_postMessage(
+                        channel=channel,
+                        text=(
+                            ":warning: *Sessao Byetech expirada* — sync continua usando contratos do banco local.\n"
+                            "Execute `push_session_render.py` para renovar a sessao e habilitar atualizacoes no Byetech CRM."
+                        ),
+                    )
+                except Exception as _slack_e:
+                    logger.warning(f"[scheduler] Slack aviso sessao: {_slack_e}")
+            else:
+                logger.info("[scheduler] Sessao Byetech OK.")
+    except Exception as _check_e:
+        logger.warning(f"[scheduler] Verificacao de sessao falhou (nao critico): {_check_e}")
 
-    logger.info("⏰ [scheduler] Sessão válida — iniciando sync completo...")
     try:
         result = await run_full_sync()
-        logger.info(f"✅ [scheduler] Sync concluída: {result}")
-        # Após sync bem-sucedido, empurra sessão para o Render
-        await _push_session_to_render()
+        logger.info(f"✅ [scheduler] Sync concluida: {result}")
+        # Apos sync bem-sucedido, empurra sessao para o Render (apenas localmente)
+        import os as _os
+        if not _os.getenv("RENDER"):
+            await _push_session_to_render()
     except Exception as e:
         logger.error(f"❌ [scheduler] Erro no sync: {e}")
 

@@ -342,6 +342,7 @@ async def run_full_sync(twofa_event_fn=None) -> dict:
         _dbg("antes de scrape_byetech")
 
         needs_2fa_flag = False
+        byetech_ok = True
 
         async def _2fa_cb():
             set_sync_state(status="needs_2fa", message="Aguardando código 2FA...", system="Byetech CRM")
@@ -349,10 +350,46 @@ async def run_full_sync(twofa_event_fn=None) -> dict:
                 return await twofa_event_fn()
             return await _wait_twofa()
 
-        byetech_contratos = await scrape_byetech(twofa_callback=_2fa_cb)
-        set_sync_state(status="running")
-
-        logger.info(f"  → {len(byetech_contratos)} contratos encontrados no Byetech")
+        byetech_contratos = []
+        try:
+            byetech_contratos = await scrape_byetech(twofa_callback=_2fa_cb)
+            set_sync_state(status="running")
+            logger.info(f"  → {len(byetech_contratos)} contratos encontrados no Byetech")
+        except RuntimeError as _e:
+            _emsg = str(_e)
+            if "SESSAO_BYETECH_EXPIRADA" in _emsg or "Playwright" in _emsg or "sessao" in _emsg.lower():
+                byetech_ok = False
+                _aviso = "AVISO: Byetech CRM offline (sessao expirada) — usando contratos do banco local para checar portais"
+                erros.append(_aviso)
+                logger.warning(f"[sync] {_aviso}")
+                set_sync_state(status="running", message="Byetech offline — usando banco local...")
+                # Fallback: carrega contratos sem entrega definitiva do banco
+                from app.database import Contrato as _Contrato
+                from sqlalchemy import select as _sel
+                async with SessionLocal() as _s:
+                    _res = await _s.execute(
+                        _sel(_Contrato).where(_Contrato.data_entrega_definitiva.is_(None))
+                    )
+                    _db_rows = _res.scalars().all()
+                    byetech_contratos = [
+                        {
+                            "cliente_cpf_cnpj": r.cliente_cpf_cnpj or "",
+                            "cliente_nome": r.cliente_nome or "",
+                            "cliente_email": r.cliente_email or "",
+                            "byetech_contrato_id": r.id_externo or "",
+                            "veiculo": r.veiculo or "",
+                            "placa": r.placa or "",
+                            "data_prevista_entrega": r.data_prevista_entrega,
+                            "fonte": r.fonte or "OUTRO",
+                            "locadora_nome": r.fonte or "",
+                            "status_atual": r.status_atual or "",
+                            "id_externo": r.id_externo or "",
+                        }
+                        for r in _db_rows
+                    ]
+                logger.info(f"  → {len(byetech_contratos)} contratos carregados do banco como fallback")
+            else:
+                raise
 
         # Agrupa clientes por locadora
         clientes_gwm      = []
@@ -390,15 +427,17 @@ async def run_full_sync(twofa_event_fn=None) -> dict:
                         lista.append(cliente_base)
                         break
 
-                # Salva contrato usando id_externo (ID inteiro) — consistente com import do Excel/Metabase
-                await _upsert_contrato(session, {
-                    **cliente_base,
-                    "fonte": fonte,
-                    "status_atual": c.get("status_atual", ""),
-                    "id_externo": c.get("id_externo", "") or c.get("byetech_contrato_id", ""),
-                })
+                # Salva contrato no banco apenas quando veio do Byetech (não quando é fallback do DB)
+                if byetech_ok:
+                    await _upsert_contrato(session, {
+                        **cliente_base,
+                        "fonte": fonte,
+                        "status_atual": c.get("status_atual", ""),
+                        "id_externo": c.get("id_externo", "") or c.get("byetech_contrato_id", ""),
+                    })
 
-            await session.commit()
+            if byetech_ok:
+                await session.commit()
 
         # 2. GWM / Sign / Drive
         if clientes_gwm:
@@ -493,13 +532,16 @@ async def run_full_sync(twofa_event_fn=None) -> dict:
             except Exception as slack_err:
                 logger.warning(f"Slack resumo não enviado: {slack_err}")
 
+        _byetech_aviso = " (Byetech offline — sessao expirada)" if not byetech_ok else ""
         set_sync_state(
             status="done",
-            message=f"Sync concluída. {total_atualizados} contratos atualizados{entregues_msg}.",
+            message=f"Sync concluida. {total_atualizados} contratos atualizados{entregues_msg}{_byetech_aviso}.",
             atualizados=total_atualizados,
             entregas_hoje=entregas_hoje,
+            byetech_ok=byetech_ok,
+            erros=erros,
         )
-        logger.info(f"✅ Sync completa — {total_atualizados} atualizados, {len(erros)} erros")
+        logger.info(f"Sync completa — {total_atualizados} atualizados, {len(erros)} erros{_byetech_aviso}")
 
         # Notifica Slack com resumo executivo do sync
         try:
