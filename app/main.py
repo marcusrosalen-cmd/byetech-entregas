@@ -375,12 +375,74 @@ async def _get_pending_count() -> int:
         return 0
 
 
+async def _rebuild_cpf_map() -> int:
+    """
+    Reconstrói o .byetech_cpf_map.json no Render fazendo scrape dos contratos ativos.
+
+    O mapa local (.byetech_cpf_map.json) só existe na máquina do desenvolvedor.
+    No Render, quando uma sessão válida é recebida, este método reconstrói o mapa
+    a partir da API do Byetech para que update_delivery_by_cpf / update_phase_by_cpf
+    funcionem sem precisar do arquivo local.
+
+    Retorna o número de entradas escritas.
+    """
+    import re as _re, json as _json
+    try:
+        from app.scrapers.byetech_crm import scrape_contratos, SESSION_FILE
+        contratos = await scrape_contratos()
+
+        cpf_map: dict = {}
+        for c in contratos:
+            cpf_raw = c.get("cliente_cpf_cnpj", "")
+            digits  = _re.sub(r"\D", "", cpf_raw)
+            if not digits:
+                continue
+
+            raw = c.get("_raw") or {}
+            cid = str(c.get("id_externo") or raw.get("id") or "")
+            if not cid:
+                continue
+
+            entry = {
+                "id":                       cid,
+                "placa_carro":              c.get("placa") or raw.get("placa_carro") or raw.get("placaCarro"),
+                "retirada_provisorio":      raw.get("retirada_provisorio") or raw.get("retiradaProvisorio"),
+                "km_excedente_value":       str(raw.get("km_excedente_value") or raw.get("kmExcedenteValue") or "0.00"),
+                "frequency_of_use":         raw.get("frequency_of_use") or raw.get("frequencyOfUse"),
+                "usage_type":               raw.get("usage_type") or raw.get("usageType"),
+                "is_reversal":              raw.get("is_reversal") or raw.get("isReversal") or 0,
+                "reversal_value":           raw.get("reversal_value") or raw.get("reversalValue"),
+                "franquia_coparticipacao":  str(raw.get("franquia_coparticipacao") or raw.get("franquiaCoparticipacao") or "0"),
+                "cobertura_danos_materiais":raw.get("cobertura_danos_materiais") or raw.get("coberturaDanosMateriais") or "--",
+                "cobertura_danos_corporais":raw.get("cobertura_danos_corporais") or raw.get("coberturaDanosCorporais") or "--",
+                "is_active":                raw.get("is_active") if raw.get("is_active") is not None else (raw.get("isActive") if raw.get("isActive") is not None else 1),
+                "is_extended":              raw.get("is_extended") or raw.get("isExtended") or 0,
+                "extension_months":         raw.get("extension_months") or raw.get("extensionMonths"),
+                "automatic_send_link":      raw.get("automatic_send_link") if raw.get("automatic_send_link") is not None else (raw.get("automaticSendLink") if raw.get("automaticSendLink") is not None else 1),
+            }
+            # Indexa por todas as variações do CPF para maximizar as chances de match
+            for v in {digits, digits.zfill(11), digits[:-1] if len(digits)==12 else digits}:
+                if v:
+                    cpf_map[v] = entry
+
+        # Salva no mesmo diretório do SESSION_FILE (raiz do projeto)
+        map_path = os.path.join(os.path.dirname(SESSION_FILE), ".byetech_cpf_map.json")
+        with open(map_path, "w", encoding="utf-8") as f:
+            _json.dump(cpf_map, f)
+
+        logger.info(f"[Byetech] Mapa CPF reconstruido: {len(contratos)} contratos → {len(cpf_map)} entradas → {map_path}")
+        return len(contratos)
+    except Exception as e:
+        logger.warning(f"[Byetech] Falha ao reconstruir mapa CPF: {e}")
+        return 0
+
+
 async def _flush_byetech_pending():
-    """Processa todas as atualizações pendentes quando Playwright estiver disponível."""
+    """Processa todas as atualizações pendentes quando a sessão Byetech estiver disponível."""
     try:
         from app.scrapers.byetech_crm import update_delivery_by_cpf
     except ImportError:
-        logger.warning("[Byetech] Playwright não disponível — pendentes aguardam processamento local")
+        logger.warning("[Byetech] Playwright nao disponivel — pendentes aguardam processamento local")
         return
 
     async with SessionLocal() as s:
@@ -763,10 +825,12 @@ async def push_byetech_session(body: PushSessionBody):
     async def _validar_e_processar():
         ok = await _test_session(body.cookies)
         if ok:
-            logger.info("[Byetech] Sessão remota validada — processando pendentes...")
+            logger.info("[Byetech] Sessao remota validada — reconstruindo mapa CPF...")
+            n = await _rebuild_cpf_map()
+            logger.info(f"[Byetech] Mapa CPF pronto ({n} contratos). Processando pendentes...")
             await _flush_byetech_pending()
         else:
-            logger.warning("[Byetech] Sessão remota inválida ou expirada")
+            logger.warning("[Byetech] Sessao remota invalida ou expirada — verifique se a sessao e recente")
 
     asyncio.create_task(_validar_e_processar())
 

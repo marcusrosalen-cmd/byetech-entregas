@@ -98,10 +98,10 @@ async def _test_session(cookies: dict) -> bool:
         async with httpx.AsyncClient(follow_redirects=True) as client:
             resp = await client.get(
                 f"{API_URL}/api/contracts",
-                params={"page": 1},
+                params={"page": 1, "per_page": 1},
                 headers=headers,
                 cookies=cookies,
-                timeout=10,
+                timeout=20,
             )
             return resp.status_code == 200
     except Exception:
@@ -579,7 +579,7 @@ async def _lookup_contrato_por_cpf(cpf_norm: str, digits: str, twofa_callback=No
                 data = resp.json()
 
                 # Estrutura real: {"data": {"contracts": {"data": [...], "last_page": N}}}
-                nested = data.get("data") or {} if isinstance(data, dict) else {}
+                nested = (data.get("data") or {}) if isinstance(data, dict) else {}
                 if isinstance(nested, dict):
                     contracts_obj = nested.get("contracts") or {}
                     items = contracts_obj.get("data", []) if isinstance(contracts_obj, dict) else []
