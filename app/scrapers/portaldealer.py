@@ -1,15 +1,13 @@
 """
-Scraper do Portal Dealer (lmmobilidade.com.br)
-Usado para: GWM, Sign, Drive (login 1) e LM (login 2)
+Scraper do Portal Dealer (portaldealer.lmmobilidade.com.br)
+Usado para: GWM, Sign & Drive (conta GWM) e LM
 
-Processo:
-1. Login
-2. Consulta por CPF/CNPJ de cada cliente dos contratos ativos
-3. Acha o pedido "concluído"
-4. Expande e coleta etapas de entrega do veículo
-5. Detecta variações de etapa desde a última consulta
+Abordagem: pagina toda a listagem de pedidos do portal e extrai CPF + status.
+Nao busca por CPF individualmente (portal nao tem essa funcionalidade estavel).
+Detecta contratos em estagio final ("Contrato" concluido) como indicador de entrega iminente.
 """
 import re
+import logging
 from datetime import datetime
 from typing import Optional
 from playwright.async_api import async_playwright, Page
@@ -17,6 +15,7 @@ from dotenv import load_dotenv
 import os
 
 load_dotenv()
+logger = logging.getLogger("portaldealer")
 
 PORTAL_URL = os.getenv("PORTALDEALER_URL", "https://portaldealer.lmmobilidade.com.br")
 
@@ -24,7 +23,7 @@ ACCOUNTS = {
     "GWM": {
         "login": os.getenv("PORTALDEALER_LOGIN_GWM", ""),
         "password": os.getenv("PORTALDEALER_PASS_GWM", ""),
-        "fontes": ["GWM", "SIGN", "DRIVE"],
+        "fontes": ["GWM", "SIGN", "DRIVE", "SIGN & DRIVE", "VW"],
     },
     "LM": {
         "login": os.getenv("PORTALDEALER_LOGIN_LM", ""),
@@ -33,23 +32,37 @@ ACCOUNTS = {
     },
 }
 
-ETAPAS_ENTREGUE = [
-    "entregue",
-    "entrega realizada",
-    "veículo entregue",
-    "definitivo",
+# Etapas que indicam contrato concluido / iminente de entrega
+ETAPAS_CONTRATO_CONCLUIDO = [
+    "contrato", "ativo", "entregue", "entrega",
+    "concluido", "concluída", "aprovado",
+]
+
+# Etapas de cancelamento / reprovação — não vira entrega
+ETAPAS_CANCELADO = [
+    "cancelado", "reprovado", "recusado", "expirado",
 ]
 
 
-def _is_etapa_final(etapa: str) -> bool:
-    return any(e in etapa.lower() for e in ETAPAS_ENTREGUE)
+def _is_etapa_contrato(etapa: str) -> bool:
+    s = etapa.lower()
+    return any(e in s for e in ETAPAS_CONTRATO_CONCLUIDO)
+
+
+def _is_cancelado(etapa: str) -> bool:
+    s = etapa.lower()
+    return any(e in s for e in ETAPAS_CANCELADO)
+
+
+def _clean_cpf(text: str) -> str:
+    return re.sub(r"[^\d]", "", text or "")
 
 
 def _parse_date(text: str) -> Optional[datetime]:
     if not text:
         return None
     text = text.strip()
-    for fmt in ["%d/%m/%Y", "%Y-%m-%d", "%d/%m/%Y %H:%M"]:
+    for fmt in ["%d/%m/%Y", "%Y-%m-%d"]:
         try:
             return datetime.strptime(text, fmt)
         except ValueError:
@@ -60,11 +73,13 @@ def _parse_date(text: str) -> Optional[datetime]:
 async def _login(page: Page, login: str, password: str) -> bool:
     """Faz login no portal."""
     try:
-        await page.goto(PORTAL_URL, wait_until="networkidle", timeout=20000)
+        await page.goto(PORTAL_URL, wait_until="networkidle", timeout=25000)
     except Exception:
         pass
 
-    # Campo de usuário/CPF — o portal usa placeholder "CPF"
+    await page.wait_for_timeout(1500)
+
+    # Preenche login
     login_selectors = [
         'input[placeholder*="CPF"]', 'input[placeholder*="cpf"]',
         'input[placeholder*="usuario"]', 'input[placeholder*="login"]',
@@ -72,28 +87,31 @@ async def _login(page: Page, login: str, password: str) -> bool:
         'input[name="cpf"]', 'input[name="email"]',
         'input[type="email"]', 'input[id*="login"]',
     ]
-    pass_selectors = [
-        'input[type="password"]', 'input[name="password"]',
-        'input[placeholder*="senha"]', 'input[placeholder*="Senha"]',
-        'input[id*="senha"]', 'input[id*="password"]',
-    ]
-
     for sel in login_selectors:
-        el = await page.query_selector(sel)
-        if el:
-            await el.fill(login)
-            break
+        try:
+            el = await page.wait_for_selector(sel, state="visible", timeout=3000)
+            if el:
+                await el.click()
+                await el.fill(login)
+                break
+        except Exception:
+            continue
 
-    for sel in pass_selectors:
-        el = await page.query_selector(sel)
-        if el:
-            await el.fill(password)
-            break
+    # Preenche senha
+    for sel in ['input[type="password"]', 'input[name="password"]',
+                 'input[placeholder*="senha"]', 'input[id*="senha"]']:
+        try:
+            el = await page.query_selector(sel)
+            if el:
+                await el.click()
+                await el.fill(password)
+                break
+        except Exception:
+            continue
 
-    # Tenta clicar no botão de submit
-    for sel in ['button[type="submit"]', 'input[type="submit"]',
-                'button:has-text("Entrar")', 'button:has-text("Login")',
-                '.btn-login', '#btn-login']:
+    # Submit
+    for sel in ['button[type="submit"]', 'button:has-text("Entrar")',
+                 'button:has-text("Login")', '.btn-login']:
         try:
             await page.click(sel, timeout=2000)
             break
@@ -108,189 +126,212 @@ async def _login(page: Page, login: str, password: str) -> bool:
         pass
     await page.wait_for_timeout(2000)
 
-    # Verifica se logou — portal redireciona para dashboard/pedidos após login OK
     url = page.url.lower()
     content = (await page.inner_text("body")).lower()
     if "erro na autenticação" in content or "erro na autenticacao" in content:
         return False
-    if "sign_in" in url or ("login" in url and "dashboard" not in url):
+    if "sign_in" in url or ("login" in url and "pedidos" not in url and "orders" not in url):
         return False
     return True
 
 
-async def _buscar_cliente(page: Page, cpf_cnpj: str) -> list[dict]:
-    """Busca pedidos de um cliente pelo CPF/CNPJ."""
-    pedidos = []
-    cpf_limpo = re.sub(r"[^\d]", "", cpf_cnpj)
-
-    # Busca campo de pesquisa
-    search_selectors = [
-        'input[placeholder*="CPF"]', 'input[placeholder*="CNPJ"]',
-        'input[placeholder*="cpf"]', 'input[placeholder*="documento"]',
-        'input[name*="cpf"]', 'input[name*="search"]', 'input[name*="busca"]',
-        '#search', '.search-input', 'input[type="search"]',
-    ]
-
-    search_field = None
-    for sel in search_selectors:
-        el = await page.query_selector(sel)
-        if el:
-            search_field = el
-            break
-
-    if not search_field:
-        # Tenta navegar diretamente para URL de busca
-        try:
-            await page.goto(f"{PORTAL_URL}/search?q={cpf_limpo}", wait_until="networkidle", timeout=15000)
-        except Exception:
-            pass
-    else:
-        await search_field.fill(cpf_limpo)
-        await page.keyboard.press("Enter")
-        try:
-            await page.wait_for_load_state("networkidle", timeout=15000)
-        except Exception:
-            pass
-
-    await page.wait_for_timeout(1500)
-
-    # Coleta resultados/pedidos
-    pedidos = await _extrair_pedidos_pagina(page, cpf_limpo)
-    return pedidos
-
-
-async def _extrair_pedidos_pagina(page: Page, cpf_cnpj: str) -> list[dict]:
-    """Extrai pedidos da página de resultado de busca."""
-    pedidos = []
-
-    # Seletores genéricos para pedidos/contratos
-    item_selectors = [
-        ".order-item", ".pedido-item", ".contract-item",
-        "tr.pedido", "tr.order", ".card-pedido",
-        "[data-type='order']", "[data-order-id]",
-    ]
-
-    items = []
-    for sel in item_selectors:
-        items = await page.query_selector_all(sel)
-        if items:
-            break
-
-    if not items:
-        # Fallback: tenta linhas de tabela
-        items = await page.query_selector_all("tbody tr")
-
-    for item in items:
-        try:
-            text = await item.inner_text()
-            if not text.strip():
-                continue
-
-            # Verifica se é pedido concluído
-            status_text = text.lower()
-            is_concluido = any(s in status_text for s in ["concluído", "concluido", "aprovado", "ativo"])
-
-            pedido_id_match = re.search(r"\b(\d{6,})\b", text)
-            pedido_id = pedido_id_match.group(1) if pedido_id_match else ""
-
-            pedido = {
-                "id_externo": pedido_id,
-                "cliente_cpf_cnpj": cpf_cnpj,
-                "status_pedido": "concluido" if is_concluido else "pendente",
-                "etapas": [],
-                "raw_text": text,
-            }
-
-            # Expande o pedido para ver etapas de entrega
-            expand_btn = await item.query_selector(
-                "button.expand, .toggle-details, [data-toggle], .btn-expand, "
-                "button[aria-expanded], .accordion-toggle"
-            )
-            if expand_btn:
-                await expand_btn.click()
-                await page.wait_for_timeout(800)
-
-            # Tenta link de detalhe
-            link = await item.query_selector("a[href*='pedido'], a[href*='order'], a[href*='contrato']")
-            if link:
-                href = await link.get_attribute("href")
-                if href:
-                    etapas = await _get_etapas_entrega(page, href)
-                    pedido["etapas"] = etapas
-                    if etapas:
-                        pedido["status_atual"] = etapas[-1].get("nome", "")
-                        pedido["data_ultima_etapa"] = etapas[-1].get("data")
-                        pedido["entregue"] = _is_etapa_final(pedido["status_atual"])
-
-            pedidos.append(pedido)
-
-        except Exception:
-            continue
-
-    return pedidos
-
-
-async def _get_etapas_entrega(page: Page, href: str) -> list[dict]:
-    """Acessa detalhe do pedido e coleta etapas de entrega."""
-    etapas = []
+async def _set_page_size(page: Page, size: int = 100):
+    """Tenta aumentar itens por página."""
     try:
-        detail_page = await page.context.new_page()
-        base = PORTAL_URL
-        url = href if href.startswith("http") else base + href
-
-        try:
-            await detail_page.goto(url, wait_until="networkidle", timeout=15000)
-        except Exception:
-            pass
-        await detail_page.wait_for_timeout(1000)
-
-        # Busca seção de entrega/etapas
-        etapa_selectors = [
-            ".etapa-entrega", ".delivery-step", ".step-item",
-            ".timeline-item", ".delivery-stage", "[data-step]",
-            ".entrega-etapa", "li.etapa",
-        ]
-
-        items = []
-        for sel in etapa_selectors:
-            items = await detail_page.query_selector_all(sel)
-            if items:
-                break
-
-        for item in items:
-            text = await item.inner_text()
-            date_match = re.search(r"\d{2}/\d{2}/\d{4}", text)
-            etapa = {
-                "nome": text.strip().split("\n")[0],
-                "data": _parse_date(date_match.group()) if date_match else None,
-                "concluida": any(c in text.lower() for c in ["✓", "✔", "concluída", "ok", "feito"]),
-            }
-            etapas.append(etapa)
-
-        # Busca também informações do veículo
-        placa_match = re.search(r"[A-Z]{3}[-\s]?\d[A-Z0-9]\d{2}", await detail_page.content())
-        if placa_match:
-            # Retorna placa junto com etapas como metadado especial
-            etapas.insert(0, {"_placa": placa_match.group(), "_meta": True})
-
-        await detail_page.close()
+        # Ant Design pagination select
+        paginator = await page.query_selector(".ant-select-selector")
+        if paginator:
+            await paginator.click()
+            await page.wait_for_timeout(500)
+            opt = await page.query_selector(f"[title='{size} / página'], [title='{size}/página']")
+            if opt:
+                await opt.click()
+                await page.wait_for_timeout(1000)
     except Exception:
         pass
 
-    return etapas
+
+async def _set_date_range(page: Page, days_back: int = 180):
+    """Define o range de datas para cobrir os ultimos N dias."""
+    try:
+        from datetime import timedelta
+        hoje = datetime.now()
+        inicio = hoje - timedelta(days=days_back)
+        inicio_str = inicio.strftime("%d/%m/%Y")
+        hoje_str = hoje.strftime("%d/%m/%Y")
+
+        # Campos de data inicial e final
+        date_inputs = await page.query_selector_all("input[placeholder='Data inicial'], input[placeholder='Data final']")
+        if len(date_inputs) >= 2:
+            # Data inicial
+            await date_inputs[0].triple_click()
+            await date_inputs[0].type(inicio_str)
+            await page.keyboard.press("Enter")
+            await page.wait_for_timeout(300)
+            # Data final
+            await date_inputs[1].triple_click()
+            await date_inputs[1].type(hoje_str)
+            await page.keyboard.press("Enter")
+            await page.wait_for_timeout(500)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception:
+                pass
+            await page.wait_for_timeout(1000)
+    except Exception as e:
+        logger.warning(f"[portaldealer] Erro ao definir datas: {e}")
+
+
+async def _extract_table_rows(page: Page) -> list[dict]:
+    """Extrai linhas da tabela de pedidos da pagina atual."""
+    rows = []
+    try:
+        # Aguarda tabela carregar
+        await page.wait_for_selector("table tbody tr, .ant-table-row", timeout=8000)
+        await page.wait_for_timeout(500)
+
+        # Tenta linhas da tabela Ant Design
+        tr_list = await page.query_selector_all(".ant-table-row, table tbody tr")
+        if not tr_list:
+            tr_list = await page.query_selector_all("tbody tr")
+
+        for tr in tr_list:
+            try:
+                cells = await tr.query_selector_all("td")
+                if not cells or len(cells) < 4:
+                    continue
+
+                texts = []
+                for cell in cells:
+                    texts.append((await cell.inner_text()).strip())
+
+                # Estrutura esperada da tabela:
+                # Pedido | Segmento | Tipo | Nome | Documento (CPF) | Data Inclusão | Data Status | Valor | Status | Ações
+                if len(texts) < 5:
+                    continue
+
+                # Extrai CPF (coluna Documento — geralmente a 5a coluna, índice 4)
+                cpf_raw = ""
+                for t in texts:
+                    if re.search(r"\d{3}\.\d{3}\.\d{3}-\d{2}|\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}", t):
+                        cpf_raw = t
+                        break
+
+                cpf = _clean_cpf(cpf_raw)
+                if not cpf:
+                    continue
+
+                # Pedido ID (primeiro campo não vazio com padrão SDI/SDB + número)
+                pedido_id = ""
+                nome = ""
+                status = ""
+                data_status = None
+
+                for t in texts:
+                    if re.match(r"^(SDI|SDB|GWM|LM)\d+", t) and not pedido_id:
+                        pedido_id = t
+                    elif re.match(r"\d{2}/\d{2}/\d{4}", t) and not data_status:
+                        data_status = _parse_date(t)
+
+                # Nome é tipicamente o campo mais longo antes do CPF
+                for i, t in enumerate(texts):
+                    if len(t) > 10 and not re.search(r"\d{3}\.\d{3}\.\d{3}|\d{2}/\d{2}/\d{4}|R\$|\d+%", t):
+                        if not re.match(r"^(SDI|SDB|GWM|LM)\d+", t) and "Drive" not in t and "Sign" not in t:
+                            nome = t
+                            break
+
+                # Status: último campo relevante antes de Ações
+                for t in reversed(texts[:-1]):
+                    if len(t) > 5 and not re.search(r"R\$|\d{2}/\d{2}/\d{4}|\d{3}\.\d{3}\.\d{3}", t):
+                        if not re.match(r"^(SDI|SDB|GWM|LM)\d+", t):
+                            status = t
+                            break
+
+                rows.append({
+                    "pedido_id": pedido_id,
+                    "nome": nome,
+                    "cpf": cpf,
+                    "status": status,
+                    "data_status": data_status,
+                    "texts": texts,
+                })
+            except Exception:
+                continue
+
+    except Exception as e:
+        logger.warning(f"[portaldealer] Erro ao extrair tabela: {e}")
+
+    return rows
+
+
+async def _get_all_orders(page: Page) -> list[dict]:
+    """Coleta todos os pedidos paginando a tabela do portal."""
+    all_rows = []
+
+    # Aumenta itens por página para 100
+    await _set_page_size(page, 100)
+
+    page_num = 1
+    max_pages = 50  # Segurança
+    while page_num <= max_pages:
+        rows = await _extract_table_rows(page)
+        if not rows:
+            break
+
+        all_rows.extend(rows)
+        logger.info(f"[portaldealer] Página {page_num}: {len(rows)} pedidos extraídos")
+
+        # Tenta ir para próxima página
+        try:
+            next_btn = await page.query_selector(
+                ".ant-pagination-next:not(.ant-pagination-disabled) button, "
+                "button[aria-label='Next Page']:not([disabled]), "
+                "li.ant-pagination-next:not(.ant-pagination-disabled)"
+            )
+            if not next_btn:
+                break
+            await next_btn.click()
+            await page.wait_for_timeout(1500)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=8000)
+            except Exception:
+                pass
+            page_num += 1
+        except Exception:
+            break
+
+    logger.info(f"[portaldealer] Total extraído: {len(all_rows)} pedidos em {page_num} páginas")
+    return all_rows
 
 
 async def scrape_portaldealer(clientes: list[dict], account_key: str = "GWM") -> list[dict]:
     """
-    Executa scraping do portal para uma conta específica.
-    clientes: lista de dicts com {cpf_cnpj, nome, byetech_contrato_id, fonte}
+    Executa scraping do portal para uma conta especifica.
+    Pagina toda a listagem e cruza por CPF com os clientes fornecidos.
+
+    clientes: lista de dicts com {cliente_cpf_cnpj, cliente_nome, byetech_contrato_id, ...}
     account_key: "GWM" ou "LM"
+
+    Retorna: lista de resultados com status atual do portal por contrato.
     """
     account = ACCOUNTS.get(account_key)
     if not account:
-        raise ValueError(f"Conta '{account_key}' não encontrada")
+        raise ValueError(f"Conta '{account_key}' nao encontrada")
 
     resultados = []
+
+    # Monta indice CPF -> cliente
+    cpf_index: dict[str, dict] = {}
+    for cli in clientes:
+        cpf_raw = cli.get("cliente_cpf_cnpj") or cli.get("cpf_cnpj", "")
+        cpf = _clean_cpf(cpf_raw)
+        if cpf:
+            cpf_index[cpf] = cli
+            # Variantes de CPF
+            if len(cpf) == 11:
+                cpf_index[cpf.zfill(11)] = cli
+            elif len(cpf) == 12:
+                cpf_index[cpf[:-1]] = cli
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -302,51 +343,70 @@ async def scrape_portaldealer(clientes: list[dict], account_key: str = "GWM") ->
             await browser.close()
             raise Exception(f"Falha no login do portal ({account_key})")
 
-        import asyncio as _asyncio
-        for cliente in clientes:
-            try:
-                # Aceita tanto "cliente_cpf_cnpj" (sync_service) quanto "cpf_cnpj" (legado)
-                cpf_raw = cliente.get("cliente_cpf_cnpj") or cliente.get("cpf_cnpj", "")
-                cpf = re.sub(r"[^\d]", "", cpf_raw)
-                if not cpf:
-                    continue
+        logger.info(f"[portaldealer] Login OK — URL: {page.url}")
 
-                # Aceita tanto "cliente_nome" quanto "nome"
-                nome = cliente.get("cliente_nome") or cliente.get("nome", "")
+        # Define range de data amplo (6 meses) para pegar mais contratos
+        await _set_date_range(page, days_back=180)
 
-                pedidos = await _asyncio.wait_for(_buscar_cliente(page, cpf), timeout=30)
-
-                for pedido in pedidos:
-                    # Filtra etapas meta
-                    etapas_reais = [e for e in pedido.get("etapas", []) if not e.get("_meta")]
-                    placa = next(
-                        (e.get("_placa") for e in pedido.get("etapas", []) if e.get("_meta")),
-                        None,
-                    )
-
-                    resultado = {
-                        "fonte": account["fontes"][0],
-                        "id_externo": pedido.get("id_externo", ""),
-                        "byetech_contrato_id": cliente.get("byetech_contrato_id", ""),
-                        "cliente_nome": nome,
-                        "cliente_cpf_cnpj": cpf,
-                        "placa": placa or cliente.get("placa", ""),
-                        "veiculo": cliente.get("veiculo", ""),
-                        "status_atual": pedido.get("status_atual", ""),
-                        "etapas": etapas_reais,
-                        "entregue": pedido.get("entregue", False),
-                        "data_ultima_etapa": pedido.get("data_ultima_etapa"),
-                    }
-                    resultados.append(resultado)
-
-            except Exception as e:
-                resultados.append({
-                    "fonte": account["fontes"][0],
-                    "cliente_cpf_cnpj": cpf_raw if "cpf_raw" in dir() else "",
-                    "byetech_contrato_id": cliente.get("byetech_contrato_id", ""),
-                    "erro": str(e),
-                })
-
+        # Coleta todos os pedidos da listagem
+        portal_orders = await _get_all_orders(page)
         await browser.close()
+
+    logger.info(f"[portaldealer] {len(portal_orders)} pedidos lidos do portal")
+
+    # Cruza com contratos do banco por CPF
+    matched = set()
+    for order in portal_orders:
+        cpf = order.get("cpf", "")
+        cli = cpf_index.get(cpf)
+        if not cli:
+            # Tenta variantes
+            for v in [cpf.zfill(11), cpf[:-1] if len(cpf) == 12 else cpf]:
+                cli = cpf_index.get(v)
+                if cli:
+                    break
+
+        if not cli:
+            continue
+
+        cpf_key = _clean_cpf(cli.get("cliente_cpf_cnpj") or cli.get("cpf_cnpj", ""))
+        if cpf_key in matched:
+            continue
+        matched.add(cpf_key)
+
+        status_portal = order.get("status", "")
+        data_status = order.get("data_status")
+
+        # Detecta entrega: "Contrato" concluído = veículo deve ser entregue em breve
+        # (entrega fisica confirmada so pelo Byetech CRM)
+        em_contrato = _is_etapa_contrato(status_portal)
+        cancelado = _is_cancelado(status_portal)
+
+        resultados.append({
+            "fonte": account["fontes"][0],
+            "id_externo": cli.get("byetech_contrato_id", ""),
+            "byetech_contrato_id": cli.get("byetech_contrato_id", ""),
+            "cliente_nome": cli.get("cliente_nome") or cli.get("nome", ""),
+            "cliente_cpf_cnpj": cli.get("cliente_cpf_cnpj") or cli.get("cpf_cnpj", ""),
+            "placa": cli.get("placa", ""),
+            "veiculo": cli.get("veiculo", ""),
+            "status_atual": status_portal,
+            "data_status_portal": data_status,
+            "entregue": False,   # Portal nao confirma entrega fisica — usa Byetech
+            "em_contrato": em_contrato,
+            "cancelado": cancelado,
+            "pedido_id_portal": order.get("pedido_id", ""),
+        })
+
+    # Contratos nao encontrados no portal
+    for cli in clientes:
+        cpf_key = _clean_cpf(cli.get("cliente_cpf_cnpj") or cli.get("cpf_cnpj", ""))
+        if cpf_key not in matched:
+            resultados.append({
+                "fonte": account["fontes"][0],
+                "cliente_cpf_cnpj": cli.get("cliente_cpf_cnpj", ""),
+                "byetech_contrato_id": cli.get("byetech_contrato_id", ""),
+                "erro": "CPF nao encontrado no portal",
+            })
 
     return resultados
