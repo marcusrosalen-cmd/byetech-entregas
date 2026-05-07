@@ -64,13 +64,28 @@ async function api(path, opts = {}) {
 }
 
 // ── Load contracts ────────────────────────────────────────
+let _loadRetryTimer = null;
+
 async function loadContracts() {
   try {
+    // Busca contratos e status da sessão em paralelo — independentes
     const [data] = await Promise.all([
       api('/contratos'),
-      checkByetechPending(),   // atualiza _byetechSessionOk em paralelo
+      checkByetechPending().catch(() => {}),  // nunca bloqueia o carregamento de contratos
     ]);
     allContracts = data.contratos || [];
+
+    // DB ainda sendo populado após reinício do Render → retry automático
+    if (allContracts.length === 0) {
+      const tbody = document.querySelector('#contracts-table tbody');
+      if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="loading">⏳ Sincronizando dados… aguarde</td></tr>';
+      if (!_loadRetryTimer) {
+        _loadRetryTimer = setTimeout(() => { _loadRetryTimer = null; loadContracts(); }, 8000);
+      }
+      return;
+    }
+    if (_loadRetryTimer) { clearTimeout(_loadRetryTimer); _loadRetryTimer = null; }
+
     updateStats(data.stats || {});
     updatePipelineCounts();
     buildReminders();
@@ -207,14 +222,23 @@ function buildReminders() {
 // ── Byetech session + pending check ──────────────────────
 let _byetechPending = 0;
 let _byetechSessionOk = true;
+let _lastSessaoCheck  = 0;          // timestamp da última chamada à sessao-ok
+const SESSION_CHECK_INTERVAL = 120e3; // re-testa sessão a cada 2 minutos no máximo
 
 async function checkByetechPending() {
   try {
     const s = await api('/sync/status');
-    _byetechPending   = s.byetech_pending || 0;
-    // Verifica sessão Byetech
-    const sessaoOk = await fetch('/api/byetech/sessao-ok').then(r => r.json()).catch(() => ({ok: true}));
-    _byetechSessionOk = sessaoOk.ok !== false;
+    _byetechPending = s.byetech_pending || 0;
+
+    // Verifica sessão Byetech — só chama a API se faz mais de 2 min da última vez
+    const now = Date.now();
+    if (now - _lastSessaoCheck > SESSION_CHECK_INTERVAL) {
+      _lastSessaoCheck = now;
+      const sessaoOk = await fetch('/api/byetech/sessao-ok')
+        .then(r => r.json())
+        .catch(() => ({ ok: true }));   // falha de rede → assume ok (não mostra banner falso)
+      _byetechSessionOk = sessaoOk.ok !== false;
+    }
 
     // Botão renovar: aparece só quando sessão expirada
     const btnRenovar = document.getElementById('btn-renovar');
@@ -226,13 +250,13 @@ async function checkByetechPending() {
     if (_byetechPending > 0 || !_byetechSessionOk) {
       el.style.display = 'flex';
       const sessaoMsg = !_byetechSessionOk
-        ? '🔑 <strong>Sessão Byetech expirada.</strong>'
+        ? '🔑 <strong>Sessão Byetech expirada.</strong> Execute <code>push_session_render.py</code> localmente.'
         : '';
       const pendMsg = _byetechPending > 0
-        ? `⚠️ <strong>${_byetechPending} entrega(s) pendente(s)</strong> aguardando sincronização.`
+        ? `⚠️ <strong>${_byetechPending} entrega(s) pendente(s)</strong> aguardando sessão Byetech válida.`
         : '';
       el.innerHTML = `
-        <span style="font-size:.88rem">${[sessaoMsg, pendMsg].filter(Boolean).join(' ')}</span>
+        <span style="font-size:.88rem">${[sessaoMsg, pendMsg].filter(Boolean).join(' &nbsp;')}</span>
         <button class="btn btn-sm btn-outline" onclick="triggerRenovarSessao()" style="margin-left:auto;white-space:nowrap">
           🔑 Renovar sessão
         </button>`;
@@ -240,6 +264,13 @@ async function checkByetechPending() {
       el.style.display = 'none';
     }
   } catch (_) {}
+}
+
+// Força re-checagem imediata da sessão (útil após renovar)
+function resetSessaoCheck() {
+  _lastSessaoCheck = 0;
+  _byetechSessionOk = true; // otimista até verificar
+  checkByetechPending();
 }
 
 async function triggerRenovarSessao() {
@@ -810,6 +841,7 @@ function pollSyncStatus() {
       } else if (status.status === 'done') {
         clearInterval(syncPolling); syncPolling = null; _2faShown = false;
         resetSyncBtn();
+        resetSessaoCheck();   // atualiza o banner de sessão após sync/renovação
         const entregasHoje = status.entregas_hoje || [];
         let msg = `Sync concluída! ${status.atualizados || 0} atualizados.`;
         if (entregasHoje.length > 0) {

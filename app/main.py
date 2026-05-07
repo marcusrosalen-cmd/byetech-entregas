@@ -786,13 +786,26 @@ async def marcar_pendente_processado(
 
 @app.get("/api/byetech/sessao-ok")
 async def byetech_sessao_ok():
-    """Verifica se a sessão Byetech em disco ainda é válida (chamada leve)."""
-    from app.scrapers.byetech_crm import _load_session_from_disk, _test_session
+    """
+    Verifica se a sessão Byetech está disponível e válida.
+    Prioridade:
+      1. Cache em memória (_session_cookies) → responde imediatamente sem chamar API
+      2. Disco → testa com chamada leve à API Byetech
+    Isso evita que o banner "Sessão expirada" apareça erroneamente quando a API
+    do Byetech está lenta.
+    """
+    from app.scrapers.byetech_crm import _session_cookies, _load_session_from_disk, _test_session
+
+    # 1. Memória: se a sessão está ativa no processo, considera válida
+    if _session_cookies:
+        return {"ok": True, "motivo": None, "source": "memory"}
+
+    # 2. Disco: carrega e testa via API
     cookies = _load_session_from_disk()
     if not cookies:
         return {"ok": False, "motivo": "sem_sessao"}
     ok = await _test_session(cookies)
-    return {"ok": ok, "motivo": None if ok else "expirada"}
+    return {"ok": ok, "motivo": None if ok else "expirada", "source": "disk"}
 
 
 class PushSessionBody(BaseModel):
