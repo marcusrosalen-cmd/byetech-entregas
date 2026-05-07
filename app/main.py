@@ -83,13 +83,26 @@ async def lifespan(app: FastAPI):
 
 
 async def _startup_metabase_sync():
-    """Roda Metabase sync no startup para garantir dados atualizados."""
+    """
+    Roda Metabase sync no startup para garantir dados atualizados.
+    Se o banco estiver vazio (reinício após deploy), faz sync completo automaticamente.
+    """
     await asyncio.sleep(5)
     try:
-        result = await run_metabase_sync(full=False)
-        logger.info(f"[startup] Metabase sync: {result.get('importados', 0)} contratos")
+        from app.database import SessionLocal as _SL, Contrato as _C
+        from sqlalchemy import func as _func, select as _sel
+        async with _SL() as s:
+            cnt = (await s.execute(_sel(_func.count()).select_from(_C))).scalar() or 0
+
+        if cnt < 100:
+            logger.info(f"[startup] Banco com {cnt} contratos — executando sync completo Metabase...")
+            result = await run_metabase_sync(full=True)
+        else:
+            result = await run_metabase_sync(full=False)
+
+        logger.info(f"[startup] Metabase sync: {result.get('importados', 0)} contratos importados (banco={cnt})")
     except Exception as e:
-        logger.warning(f"[startup] Metabase sync não disponível: {e}")
+        logger.warning(f"[startup] Metabase sync nao disponivel: {e}")
 
 
 app = FastAPI(title="Byetech Entregas", lifespan=lifespan)
