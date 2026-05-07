@@ -907,11 +907,14 @@ async def run_metabase_sync(full: bool = False) -> dict:
     Sincroniza contratos do Metabase.
     full=True → busca todos os contratos ativos (bootstrap).
     full=False → busca contratos de hoje + ontem (novas vendas do dia anterior incluídas).
+
+    Detecta entregas novas (data_entrega_definitiva transitou de None → data)
+    e notifica o Byetech CRM automaticamente para contratos dos últimos 30 dias.
     """
     from app.scrapers.metabase import fetch_all_active, fetch_contracts_by_date
     from datetime import date, timedelta
 
-    logger.info(f"📊 Metabase sync ({'completo' if full else 'diário'})...")
+    logger.info(f"Metabase sync ({'completo' if full else 'diario'})...")
 
     if full:
         contratos = await fetch_all_active()
@@ -927,15 +930,60 @@ async def run_metabase_sync(full: bool = False) -> dict:
             key = c.get("id_externo") or c.get("cliente_cpf_cnpj") or id(c)
             seen[key] = c
         contratos = list(seen.values())
-        logger.info(f"  → {len(contratos_hoje)} hoje | {len(contratos_ontem)} ontem | {len(contratos)} únicos")
+        logger.info(f"  → {len(contratos_hoje)} hoje | {len(contratos_ontem)} ontem | {len(contratos)} unicos")
+
+    # Contratos que já tinham entrega antes deste sync (para detectar transições)
+    async with SessionLocal() as s:
+        res = await s.execute(
+            select(Contrato.id).where(Contrato.data_entrega_definitiva.is_not(None))
+        )
+        ja_entregues: set = {row[0] for row in res.all()}
+
+    # Janela de notificação: só notifica Byetech para entregas dos últimos 30 dias
+    # (evita flood de tarefas em sync bootstrap com centenas de contratos históricos)
+    corte_notificacao = datetime.utcnow() - timedelta(days=30)
 
     importados = 0
+    novas_entregas: list[dict] = []
+
     async with SessionLocal() as session:
         for c in contratos:
-            # Metabase: cria contrato novo com todos os campos; existente só atualiza status/datas
+            cpf    = c.get("cliente_cpf_cnpj", "")
+            fonte  = c.get("fonte", "")
+            id_ext = c.get("id_externo", "")
+            cid    = _contrato_id(fonte, id_ext, cpf)
+            de     = c.get("data_entrega_definitiva")
+
+            # Transição para entregue: contrato existente sem entrega que agora tem data
+            if de and cpf and cid not in ja_entregues:
+                de_dt = de if isinstance(de, datetime) else datetime.combine(de, datetime.min.time())
+                if de_dt >= corte_notificacao:
+                    novas_entregas.append(c)
+
             await _upsert_contrato(session, c, portal_update=True)
             importados += 1
         await session.commit()
 
-    logger.info(f"✅ Metabase sync: {importados} contratos processados")
-    return {"importados": importados}
+    # Notifica Byetech sobre novas entregas detectadas via Metabase
+    if novas_entregas:
+        logger.info(f"[Metabase] {len(novas_entregas)} nova(s) entrega(s) recente(s) — notificando Byetech...")
+        import asyncio as _asyncio
+        for c in novas_entregas:
+            cpf = c.get("cliente_cpf_cnpj", "")
+            de  = c.get("data_entrega_definitiva")
+            if not (cpf and de):
+                continue
+            de_dt = de if isinstance(de, datetime) else datetime.combine(de, datetime.min.time())
+            fonte  = c.get("fonte", "")
+            id_ext = c.get("id_externo", "")
+            cid    = _contrato_id(fonte, id_ext, cpf)
+            _asyncio.create_task(_update_byetech_crm_entrega(
+                cpf=cpf,
+                placa=c.get("placa", ""),
+                data=de_dt,
+                contrato_id=cid,
+                cliente_nome=c.get("cliente_nome", ""),
+            ))
+
+    logger.info(f"Metabase sync: {importados} contratos processados, {len(novas_entregas)} entrega(s) nova(s)")
+    return {"importados": importados, "novas_entregas": len(novas_entregas)}
