@@ -101,8 +101,17 @@ async def _test_session(cookies: dict) -> bool:
                 params={"page": 1, "per_page": 1},
                 headers=headers,
                 cookies=cookies,
-                timeout=20,
+                timeout=45,
             )
+            # 200 = ok (pode retornar HTML do SPA ou JSON — ambos válidos)
+            # 401/403/302-para-login = sessão expirada
+            if resp.status_code == 200:
+                return True
+            if resp.status_code in (401, 403):
+                return False
+            # Redirect para login page
+            if "login" in str(resp.url).lower() and resp.status_code in (301, 302):
+                return False
             return resp.status_code == 200
     except Exception:
         return False
@@ -242,10 +251,18 @@ def _make_headers(cookies: dict) -> dict:
     xsrf_decoded = urllib.parse.unquote(xsrf)
     return {
         "X-XSRF-TOKEN": xsrf_decoded,
-        "Accept": "application/json",
+        "Accept": "application/json, text/plain, */*",
         "Content-Type": "application/json",
         "Origin": BYETECH_URL,
         "Referer": f"{BYETECH_URL}/contracts",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
     }
 
 
