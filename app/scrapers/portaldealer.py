@@ -44,13 +44,19 @@ ETAPAS_CANCELADO = [
 ]
 
 
+def _normalize(text: str) -> str:
+    """Remove acentos para comparação robusta."""
+    import unicodedata
+    return unicodedata.normalize("NFD", text).encode("ascii", "ignore").decode("ascii").lower()
+
+
 def _is_etapa_contrato(etapa: str) -> bool:
-    s = etapa.lower()
+    s = _normalize(etapa)
     return any(e in s for e in ETAPAS_CONTRATO_CONCLUIDO)
 
 
 def _is_cancelado(etapa: str) -> bool:
-    s = etapa.lower()
+    s = _normalize(etapa)
     return any(e in s for e in ETAPAS_CANCELADO)
 
 
@@ -133,6 +139,174 @@ async def _login(page: Page, login: str, password: str) -> bool:
     if "sign_in" in url or ("login" in url and "pedidos" not in url and "orders" not in url):
         return False
     return True
+
+
+async def _clear_segment_filter(page: Page):
+    """
+    Limpa o filtro de segmento para que o portal mostre TODOS os pedidos
+    (Sign & Drive, Assine Car GWM, Volkswagen, etc.).
+    O portal Ant Design tem um select de segmento que por padrão pode estar
+    filtrado para apenas um segmento.
+    """
+    try:
+        await page.wait_for_timeout(1000)
+        # Tenta clicar em botão de limpar filtros
+        for sel in [
+            'button:has-text("Limpar")',
+            'button:has-text("Limpar filtros")',
+            'button:has-text("Todos")',
+            '.ant-btn:has-text("Limpar")',
+        ]:
+            try:
+                btn = await page.query_selector(sel)
+                if btn:
+                    await btn.click()
+                    await page.wait_for_timeout(800)
+                    logger.info("[portaldealer] Filtro limpo via botão")
+                    break
+            except Exception:
+                continue
+
+        # Tenta selects de segmento — busca por placeholder "Segmento" ou similar
+        for placeholder in ["Segmento", "segmento", "Segment"]:
+            try:
+                sel_el = page.locator(f".ant-select:has(.ant-select-selection-placeholder:has-text('{placeholder}'))")
+                if await sel_el.count() == 0:
+                    # Tenta pelo label próximo
+                    sel_el = page.locator(f"[placeholder*='{placeholder}']").first
+                if await sel_el.count() > 0:
+                    # Já está sem seleção (placeholder visível = sem filtro), ok
+                    pass
+            except Exception:
+                continue
+
+        # Se há um select com valor selecionado (não placeholder), limpa clicando no X
+        try:
+            clear_icons = await page.query_selector_all(".ant-select-clear")
+            for icon in clear_icons:
+                await icon.click()
+                await page.wait_for_timeout(500)
+            if clear_icons:
+                logger.info(f"[portaldealer] {len(clear_icons)} filtro(s) de select limpos")
+        except Exception:
+            pass
+
+        try:
+            await page.wait_for_load_state("networkidle", timeout=8000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(500)
+    except Exception as e:
+        logger.warning(f"[portaldealer] _clear_segment_filter: {e}")
+
+
+async def _search_by_document(page: Page, cpf_formatted: str) -> list[dict]:
+    """
+    Usa a busca por coluna 'Documento' do portal Ant Design para encontrar
+    pedidos de um CPF específico, independente do filtro de data ativo.
+    cpf_formatted: CPF no formato "XXX.XXX.XXX-XX"
+    """
+    try:
+        # Clica no ícone de busca da coluna Documento (Q icon no header)
+        doc_search_icons = [
+            'th:has-text("Documento") .ant-table-filter-trigger',
+            'th:has-text("Documento") button',
+            '.ant-table-filter-column:has-text("Documento") .ant-table-filter-trigger',
+        ]
+        clicked = False
+        for sel in doc_search_icons:
+            try:
+                icon = await page.query_selector(sel)
+                if icon:
+                    await icon.click()
+                    await page.wait_for_timeout(600)
+                    clicked = True
+                    break
+            except Exception:
+                continue
+
+        if not clicked:
+            return []
+
+        # Preenche o campo de busca que apareceu
+        search_input = await page.query_selector(
+            ".ant-table-filter-dropdown input, "
+            ".ant-dropdown input[type='text'], "
+            "input[placeholder*='Buscar'], input[placeholder*='Search'], "
+            "input[placeholder*='Pesquisar']"
+        )
+        if not search_input:
+            # Fecha o dropdown sem fazer nada
+            await page.keyboard.press("Escape")
+            return []
+
+        await search_input.click(click_count=3)
+        await search_input.fill(cpf_formatted)
+        await page.wait_for_timeout(300)
+
+        # Clica em "Buscar" / "OK" / pressiona Enter
+        for sel in [
+            'button:has-text("Buscar")',
+            'button:has-text("OK")',
+            'button[type="submit"]',
+            '.ant-btn-primary',
+        ]:
+            try:
+                btn = await page.query_selector(sel)
+                if btn:
+                    await btn.click()
+                    break
+            except Exception:
+                continue
+        else:
+            await page.keyboard.press("Enter")
+
+        await page.wait_for_timeout(1500)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=8000)
+        except Exception:
+            pass
+
+        # Extrai os resultados
+        rows = await _extract_table_rows(page)
+
+        # Limpa o filtro clicando no reset / "Limpar"
+        for sel in [
+            'button:has-text("Limpar")',
+            'button:has-text("Redefinir")',
+            'button:has-text("Reset")',
+        ]:
+            try:
+                btn = await page.query_selector(sel)
+                if btn:
+                    await btn.click()
+                    await page.wait_for_timeout(500)
+                    break
+            except Exception:
+                continue
+        else:
+            # Fecha o dropdown
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(500)
+
+        try:
+            await page.wait_for_load_state("networkidle", timeout=6000)
+        except Exception:
+            pass
+
+        return rows
+
+    except Exception as e:
+        logger.warning(f"[portaldealer] _search_by_document({cpf_formatted}): {e}")
+        return []
+
+
+async def _format_cpf(cpf: str) -> str:
+    """Formata CPF de 11 dígitos para XXX.XXX.XXX-XX."""
+    c = re.sub(r"[^\d]", "", cpf)
+    if len(c) == 11:
+        return f"{c[:3]}.{c[3:6]}.{c[6:9]}-{c[9:]}"
+    return cpf
 
 
 async def _set_page_size(page: Page, size: int = 100):
@@ -231,14 +405,14 @@ async def _extract_table_rows(page: Page) -> list[dict]:
                 if not cpf:
                     continue
 
-                # Pedido ID (primeiro campo não vazio com padrão SDI/SDB + número)
+                # Pedido ID — padrões conhecidos: SDI/SDB (Sign & Drive), ACF (Assine Car GWM/VW), GWM, LM, CI
                 pedido_id = ""
                 nome = ""
                 status = ""
                 data_status = None
 
                 for t in texts:
-                    if re.match(r"^(SDI|SDB|GWM|LM)\d+", t) and not pedido_id:
+                    if re.match(r"^(SDI|SDB|ACF|GWM|LM|CI)\d+", t) and not pedido_id:
                         pedido_id = t
                     elif re.match(r"\d{2}/\d{2}/\d{4}", t) and not data_status:
                         data_status = _parse_date(t)
@@ -246,7 +420,7 @@ async def _extract_table_rows(page: Page) -> list[dict]:
                 # Nome é tipicamente o campo mais longo antes do CPF
                 for i, t in enumerate(texts):
                     if len(t) > 10 and not re.search(r"\d{3}\.\d{3}\.\d{3}|\d{2}/\d{2}/\d{4}|R\$|\d+%", t):
-                        if not re.match(r"^(SDI|SDB|GWM|LM)\d+", t) and "Drive" not in t and "Sign" not in t:
+                        if not re.match(r"^(SDI|SDB|ACF|GWM|LM|CI)\d+", t) and "Drive" not in t and "Sign" not in t:
                             nome = t
                             break
 
@@ -282,7 +456,7 @@ async def _get_all_orders(page: Page) -> list[dict]:
     await _set_page_size(page, 100)
 
     page_num = 1
-    max_pages = 50  # Segurança
+    max_pages = 200  # Aumentado para cobrir janelas de 2 anos
     while page_num <= max_pages:
         rows = await _extract_table_rows(page)
         if not rows:
@@ -355,6 +529,10 @@ async def scrape_portaldealer(clientes: list[dict], account_key: str = "GWM") ->
 
         logger.info(f"[portaldealer] Login OK — URL: {page.url}")
 
+        # Limpa filtros de segmento para exibir TODOS os tipos de pedido
+        # (Sign & Drive SDI, Assine Car GWM ACF, Volkswagen CI, etc.)
+        await _clear_segment_filter(page)
+
         # Define range de data amplo (6 meses) para pegar mais contratos
         await _set_date_range(page, days_back=180)
 
@@ -418,5 +596,95 @@ async def scrape_portaldealer(clientes: list[dict], account_key: str = "GWM") ->
                 "byetech_contrato_id": cli.get("byetech_contrato_id", ""),
                 "erro": "CPF nao encontrado no portal",
             })
+
+    return resultados
+
+
+async def scrape_portaldealer_gwm(clientes: list[dict]) -> list[dict]:
+    """
+    Busca contratos GWM (Assine Car GWM / ACF) no portal dealer.
+    Usa busca individual por CPF via filtro de coluna, ignorando o filtro
+    de data — necessário porque os contratos GWM podem ser antigos.
+
+    clientes: lista de dicts com {cliente_cpf_cnpj, cliente_nome, byetech_contrato_id, ...}
+    Retorna: lista de resultados com status atual do portal por contrato.
+    """
+    account = ACCOUNTS.get("GWM")
+    if not account:
+        raise ValueError("Conta GWM nao encontrada")
+
+    resultados = []
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context()
+        page = await context.new_page()
+
+        logged = await _login(page, account["login"], account["password"])
+        if not logged:
+            await browser.close()
+            raise Exception("Falha no login do portal (GWM)")
+
+        logger.info(f"[portaldealer] GWM login OK — URL: {page.url}")
+
+        # Limpa filtros iniciais
+        await _clear_segment_filter(page)
+        # Sem filtro de data para capturar contratos antigos
+        # Aguarda tabela carregar
+        await page.wait_for_timeout(2000)
+
+        for cli in clientes:
+            cpf_raw = cli.get("cliente_cpf_cnpj") or cli.get("cpf_cnpj", "")
+            cpf = _clean_cpf(cpf_raw)
+            if not cpf:
+                resultados.append({
+                    "fonte": "GWM",
+                    "byetech_contrato_id": cli.get("byetech_contrato_id", ""),
+                    "cliente_nome": cli.get("cliente_nome", ""),
+                    "cliente_cpf_cnpj": cpf_raw,
+                    "erro": "CPF vazio",
+                })
+                continue
+
+            cpf_fmt = await _format_cpf(cpf)
+            logger.info(f"[portaldealer] Buscando GWM CPF={cpf_fmt} ({cli.get('cliente_nome', '')})")
+            rows = await _search_by_document(page, cpf_fmt)
+
+            if not rows:
+                resultados.append({
+                    "fonte": "GWM",
+                    "byetech_contrato_id": cli.get("byetech_contrato_id", ""),
+                    "cliente_nome": cli.get("cliente_nome", ""),
+                    "cliente_cpf_cnpj": cpf_raw,
+                    "erro": "CPF nao encontrado no portal",
+                })
+                continue
+
+            # Pega o pedido mais recente (primeiro da lista)
+            order = rows[0]
+            status_portal = order.get("status", "")
+            em_contrato = _is_etapa_contrato(status_portal)
+            cancelado   = _is_cancelado(status_portal)
+
+            resultados.append({
+                "fonte": "GWM",
+                "id_externo": cli.get("byetech_contrato_id", ""),
+                "byetech_contrato_id": cli.get("byetech_contrato_id", ""),
+                "cliente_nome": cli.get("cliente_nome") or order.get("nome", ""),
+                "cliente_cpf_cnpj": cpf_raw,
+                "placa": cli.get("placa", ""),
+                "veiculo": cli.get("veiculo", ""),
+                "status_atual": status_portal,
+                "data_status_portal": order.get("data_status"),
+                "entregue": False,
+                "em_contrato": em_contrato,
+                "cancelado": cancelado,
+                "pedido_id_portal": order.get("pedido_id", ""),
+                "todos_pedidos": [r.get("pedido_id") for r in rows],
+            })
+            logger.info(f"[portaldealer] GWM {cli.get('cliente_nome','')} -> {order.get('pedido_id','')} | {status_portal}")
+            await page.wait_for_timeout(500)  # pausa entre buscas
+
+        await browser.close()
 
     return resultados
