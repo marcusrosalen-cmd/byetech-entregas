@@ -243,37 +243,37 @@ def start_scheduler():
     scheduler = get_scheduler()
     BRA = "America/Sao_Paulo"
 
-    # Sync completo Byetech CRM — 08:00 dias úteis (seg-sex)
+    # Sync completo Byetech CRM — 10:00 dias úteis (seg-sex)
     scheduler.add_job(
         job_sync_all,
-        CronTrigger(hour=8, minute=0, day_of_week="mon-fri", timezone=BRA),
+        CronTrigger(hour=10, minute=0, day_of_week="mon-fri", timezone=BRA),
         id="sync_all",
         replace_existing=True,
         name="Sync completo (dias úteis)",
     )
 
-    # Sign & Drive sync — 10:00 dias úteis (não precisa de Playwright, roda no Render)
+    # Sign & Drive sync — 10:20 dias úteis (após sync Byetech)
     scheduler.add_job(
         job_signanddrive_daily,
-        CronTrigger(hour=10, minute=0, day_of_week="mon-fri", timezone=BRA),
+        CronTrigger(hour=10, minute=20, day_of_week="mon-fri", timezone=BRA),
         id="signanddrive_daily",
         replace_existing=True,
         name="Sign & Drive sync diário",
     )
 
-    # Metabase sync — 08:45 seg-sab (captura contratos criados no fim de semana)
+    # Metabase sync — 10:45 seg-sab (captura contratos criados no fim de semana)
     scheduler.add_job(
         job_metabase_daily,
-        CronTrigger(hour=8, minute=45, day_of_week="mon-sat", timezone=BRA),
+        CronTrigger(hour=10, minute=45, day_of_week="mon-sat", timezone=BRA),
         id="metabase_daily",
         replace_existing=True,
         name="Metabase sync diário",
     )
 
-    # Alertas Slack + relatório — 09:00 dias úteis
+    # Alertas Slack + relatório — 11:00 dias úteis
     scheduler.add_job(
         job_check_alerts,
-        CronTrigger(hour=9, minute=0, day_of_week="mon-fri", timezone=BRA),
+        CronTrigger(hour=11, minute=0, day_of_week="mon-fri", timezone=BRA),
         id="check_alerts",
         replace_existing=True,
         name="Alertas Slack + e-mails Unidas (dias úteis)",
@@ -282,7 +282,7 @@ def start_scheduler():
     scheduler.start()
     logger.info(
         "✅ Scheduler iniciado — "
-        "Byetech 08:00 (seg-sex) | Metabase 08:45 (seg-sab) | "
-        "Alertas 09:00 (seg-sex) | S&D 10:00 (seg-sex)"
+        "Byetech 10:00 (seg-sex) | S&D 10:20 (seg-sex) | "
+        "Metabase 10:45 (seg-sab) | Alertas 11:00 (seg-sex)"
     )
     return scheduler
