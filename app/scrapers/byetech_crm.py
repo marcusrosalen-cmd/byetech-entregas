@@ -103,17 +103,17 @@ async def _test_session(cookies: dict) -> bool:
                 cookies=cookies,
                 timeout=45,
             )
-            # 200 = ok (pode retornar HTML do SPA ou JSON — ambos válidos)
-            # 401/403/302-para-login = sessão expirada
-            if resp.status_code == 200:
-                return True
-            if resp.status_code in (401, 403):
-                return False
-            # Redirect para login page
-            if "login" in str(resp.url).lower() and resp.status_code in (301, 302):
-                return False
-            return resp.status_code == 200
-    except Exception:
+        logger.info(f"[_test_session] status={resp.status_code} url={resp.url}")
+        # 200/429 = sessao valida (429 = rate limited mas autenticado)
+        if resp.status_code in (200, 429):
+            return True
+        if resp.status_code in (401, 403):
+            return False
+        if "login" in str(resp.url).lower():
+            return False
+        return False
+    except Exception as e:
+        logger.warning(f"[_test_session] excecao: {type(e).__name__}: {e}")
         return False
 
 
@@ -377,9 +377,10 @@ def _contract_to_dict(c: dict) -> dict:
 def _map_locadora(nome: str) -> str:
     """Mapeia nome da locadora para o código interno."""
     n = (nome or "").upper()
+    # SIGN & DRIVE antes de GWM: evita que "GWM Sign & Drive" vire GWM
     if "SIGN" in n or "DRIVE" in n:
         return "SIGN & DRIVE"
-    if "GWM" in n:
+    if "GWM" in n or "HAVAL" in n or "ORA" in n or "TANK" in n:
         return "GWM"
     if "LOCALIZA" in n:
         return "LOCALIZA"

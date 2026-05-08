@@ -160,24 +160,27 @@ async def _set_date_range(page: Page, days_back: int = 180):
         inicio_str = inicio.strftime("%d/%m/%Y")
         hoje_str = hoje.strftime("%d/%m/%Y")
 
-        # Campos de data inicial e final
-        date_inputs = await page.query_selector_all("input[placeholder='Data inicial'], input[placeholder='Data final']")
-        if len(date_inputs) >= 2:
-            # Data inicial
-            await date_inputs[0].triple_click()
-            await date_inputs[0].type(inicio_str)
+        # Usa locators (auto-retry, nao desancora do DOM)
+        ini_loc = page.locator("input[placeholder='Data inicial']")
+        fim_loc = page.locator("input[placeholder='Data final']")
+
+        if await ini_loc.count() >= 1:
+            await ini_loc.first.click(click_count=3)
+            await ini_loc.first.fill(inicio_str)
             await page.keyboard.press("Enter")
             await page.wait_for_timeout(300)
-            # Data final
-            await date_inputs[1].triple_click()
-            await date_inputs[1].type(hoje_str)
+
+        if await fim_loc.count() >= 1:
+            await fim_loc.first.click(click_count=3)
+            await fim_loc.first.fill(hoje_str)
             await page.keyboard.press("Enter")
             await page.wait_for_timeout(500)
-            try:
-                await page.wait_for_load_state("networkidle", timeout=10000)
-            except Exception:
-                pass
-            await page.wait_for_timeout(1000)
+
+        try:
+            await page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(1000)
     except Exception as e:
         logger.warning(f"[portaldealer] Erro ao definir datas: {e}")
 
@@ -186,14 +189,21 @@ async def _extract_table_rows(page: Page) -> list[dict]:
     """Extrai linhas da tabela de pedidos da pagina atual."""
     rows = []
     try:
-        # Aguarda tabela carregar
-        await page.wait_for_selector("table tbody tr, .ant-table-row", timeout=8000)
+        # Aguarda linhas reais (exclui ant-table-measure-row que e hidden)
+        await page.wait_for_selector(
+            ".ant-table-row:not(.ant-table-measure-row), table tbody tr:not([aria-hidden='true'])",
+            timeout=10000,
+        )
         await page.wait_for_timeout(500)
 
-        # Tenta linhas da tabela Ant Design
-        tr_list = await page.query_selector_all(".ant-table-row, table tbody tr")
+        # Pega apenas linhas visiveis (nao hidden, nao measure-row)
+        tr_list = await page.query_selector_all(
+            ".ant-table-row:not(.ant-table-measure-row):not([aria-hidden='true'])"
+        )
         if not tr_list:
-            tr_list = await page.query_selector_all("tbody tr")
+            tr_list = await page.query_selector_all(
+                "tbody tr:not([aria-hidden='true'])"
+            )
 
         for tr in tr_list:
             try:
