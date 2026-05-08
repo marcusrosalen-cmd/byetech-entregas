@@ -252,10 +252,10 @@ def start_scheduler():
         name="Sync completo (dias úteis)",
     )
 
-    # Sign & Drive sync — 08:20 dias úteis (não precisa de Playwright, roda no Render)
+    # Sign & Drive sync — 10:00 dias úteis (não precisa de Playwright, roda no Render)
     scheduler.add_job(
         job_signanddrive_daily,
-        CronTrigger(hour=8, minute=20, day_of_week="mon-fri", timezone=BRA),
+        CronTrigger(hour=10, minute=0, day_of_week="mon-fri", timezone=BRA),
         id="signanddrive_daily",
         replace_existing=True,
         name="Sign & Drive sync diário",
@@ -282,7 +282,7 @@ def start_scheduler():
     scheduler.start()
     logger.info(
         "✅ Scheduler iniciado — "
-        "Byetech 08:00 (seg-sex) | S&D 08:20 (seg-sex) | "
-        "Metabase 08:45 (seg-sab) | Alertas 09:00 (seg-sex)"
+        "Byetech 08:00 (seg-sex) | Metabase 08:45 (seg-sab) | "
+        "Alertas 09:00 (seg-sex) | S&D 10:00 (seg-sex)"
     )
     return scheduler
