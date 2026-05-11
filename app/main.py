@@ -34,7 +34,7 @@ except Exception as _e:
     logging.getLogger("main").warning(f"Scheduler indisponível: {_e}")
 
 try:
-    from app.services.sync_service import run_full_sync, run_metabase_sync, run_gwm_lm_validation, run_signanddrive_sync
+    from app.services.sync_service import run_full_sync, run_metabase_sync, run_gwm_lm_validation, run_signanddrive_sync, run_gwm_portaldealer_sync
     _HAS_SYNC = True
 except Exception as _e:
     _HAS_SYNC = False
@@ -1239,6 +1239,71 @@ async def sync_signanddrive(body: SdSyncBody | None = None):
 
     asyncio.create_task(_run())
     return {"ok": True, "message": "Sync Sign & Drive iniciada. Resultado chegara no Slack."}
+
+
+@app.post("/api/sync/gwm")
+async def sync_gwm_portal():
+    """
+    Consulta o Portal Dealer (GWM) para detectar entregas de contratos Haval/GWM.
+    Busca individual por CPF — ~35s por contrato.
+    Atualiza Byetech CRM diretamente (await, nao background task).
+    Roda em background. Resultado chega no Slack.
+    """
+    if not _HAS_SYNC:
+        raise HTTPException(503, "Sync service nao disponivel")
+
+    state = get_sync_state()
+    if state.get("status") == "running":
+        raise HTTPException(409, "Ja existe uma operacao em andamento — aguarde.")
+
+    async def _run():
+        from app.services.slack_service import get_client, get_or_create_channel
+
+        set_sync_state(
+            status="running",
+            message="GWM Portal: iniciando consulta...",
+            atualizados=0,
+            iniciado_em=datetime.utcnow().isoformat(),
+        )
+        try:
+            resultado = await run_gwm_portaldealer_sync()
+            n_ent  = len(resultado.get("entregues", []))
+            n_nao  = len(resultado.get("nao_encontrados", []))
+            n_err  = len(resultado.get("erros", []))
+
+            set_sync_state(
+                status="done",
+                message=f"GWM Portal concluido — {n_ent} entregue(s) | {n_nao} nao encontrados",
+                atualizados=n_ent,
+            )
+
+            # Slack
+            try:
+                channel = await get_or_create_channel()
+                client  = get_client()
+                hoje_str = datetime.now().strftime("%d/%m/%Y %H:%M")
+                icon = "✅" if not n_err else "⚠️"
+                linhas = [f"{icon} *GWM Portal Sync — {hoje_str}*"]
+                linhas.append(f"Entregues: *{n_ent}* | Nao encontrados: *{n_nao}* | Erros: *{n_err}*")
+                if resultado.get("entregues"):
+                    linhas.append("")
+                    for e in resultado["entregues"]:
+                        de = e.get("data_entrega")
+                        de_fmt = de.strftime("%d/%m/%Y") if de and hasattr(de, "strftime") else str(de or "—")
+                        linhas.append(f"  ✅ *{e.get('cliente_nome','—')}* — {e.get('placa','')} | {de_fmt}")
+                if resultado.get("erros"):
+                    for err in resultado["erros"][:3]:
+                        linhas.append(f"  ⚠️ {err[:100]}")
+                await client.chat_postMessage(channel=channel, text="\n".join(linhas), mrkdwn=True)
+            except Exception as slack_err:
+                logger.warning(f"GWM Portal Slack nao enviado: {slack_err}")
+
+        except Exception as e:
+            set_sync_state(status="error", message=str(e))
+            logger.error(f"Erro sync GWM Portal: {e}", exc_info=True)
+
+    asyncio.create_task(_run())
+    return {"ok": True, "message": "Sync GWM Portal iniciada. Resultado chegara no Slack."}
 
 
 @app.get("/api/health")

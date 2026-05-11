@@ -847,6 +847,9 @@ async def run_signanddrive_sync(
         logger.error(f"Sign & Drive scrape erro: {e}")
         return resultado
 
+    # Dict CPF → info de entrega (dedup por CPF, aguarda Byetech após commit)
+    _entregas_byetech_pendentes: dict[str, dict] = {}
+
     async with SessionLocal() as session:
         for r in resultados:
             if r.get("erro"):
@@ -875,13 +878,30 @@ async def run_signanddrive_sync(
             status_before = c_db.status_atual if c_db else None
 
             if r.get("entregue"):
-                await _aplicar_entrega_portal(r)
+                # Determina data da entrega
+                if r.get("data_entrega_definitiva"):
+                    data_ent = r["data_entrega_definitiva"]
+                elif r.get("data_ultima_etapa"):
+                    data_ent = r["data_ultima_etapa"]
+                else:
+                    data_ent = datetime.utcnow()
+                r["data_entrega_definitiva"] = data_ent
+                r["status_atual"] = "Definitivo entregue"
                 resultado["entregues"].append({
                     "cliente_nome": r.get("cliente_nome", "—"),
                     "placa":        r.get("placa", ""),
                     "veiculo":      r.get("veiculo", "—"),
-                    "data_entrega": r.get("data_entrega_definitiva"),
+                    "data_entrega": data_ent,
                 })
+                # Acumula para atualizar Byetech FORA do loop de sessão DB (dedup por CPF)
+                cpf_ent = _re.sub(r"\D", "", r.get("cliente_cpf_cnpj", ""))
+                if cpf_ent and cpf_ent not in _entregas_byetech_pendentes:
+                    _entregas_byetech_pendentes[cpf_ent] = {
+                        "cpf_raw":      r.get("cliente_cpf_cnpj", ""),
+                        "placa":        r.get("placa", ""),
+                        "data":         data_ent,
+                        "cliente_nome": r.get("cliente_nome", ""),
+                    }
 
             changed = await _upsert_contrato(session, r, portal_update=True)
 
@@ -936,10 +956,183 @@ async def run_signanddrive_sync(
 
         await session.commit()
 
+    # ── Atualiza Byetech CRM diretamente (await, dedup por CPF) ──────────────
+    if _entregas_byetech_pendentes:
+        logger.info(f"[S&D] Atualizando {len(_entregas_byetech_pendentes)} cliente(s) no Byetech CRM...")
+        try:
+            from app.scrapers.byetech_crm import update_delivery_by_cpf as _upd_byetech
+        except ImportError:
+            _upd_byetech = None
+
+        for i, (cpf_d, info) in enumerate(_entregas_byetech_pendentes.items(), 1):
+            nome  = info["cliente_nome"]
+            placa = info["placa"]
+            data  = info["data"]
+            cpf_r = info["cpf_raw"]
+            try:
+                if _upd_byetech:
+                    ok = await _upd_byetech(cpf_raw=cpf_r, data_entrega=data, placa=placa or None)
+                    if ok:
+                        logger.info(f"[S&D Byetech {i}/{len(_entregas_byetech_pendentes)}] OK — {nome}")
+                    else:
+                        logger.error(f"[S&D Byetech {i}/{len(_entregas_byetech_pendentes)}] False — {nome}, enfileirando")
+                        await _enfileirar_byetech("", cpf_r, placa, data, nome)
+                        resultado["erros"].append(f"Byetech entrega {nome}: update retornou False")
+                else:
+                    await _enfileirar_byetech("", cpf_r, placa, data, nome)
+            except Exception as _be:
+                logger.error(f"[S&D Byetech {i}/{len(_entregas_byetech_pendentes)}] Erro {nome}: {_be}")
+                await _enfileirar_byetech("", cpf_r, placa, data, nome)
+                resultado["erros"].append(f"Byetech entrega {nome}: {str(_be)[:80]}")
+
     logger.info(
         f"Sign & Drive sync: {len(resultado['entregues'])} entregas | "
         f"{len(resultado['mudancas_status'])} mudancas | "
         f"{len(resultado['sem_pedido'])} sem pedido"
+    )
+    return resultado
+
+
+async def run_gwm_portaldealer_sync() -> dict:
+    """
+    Consulta o Portal Dealer (GWM) via busca por CPF para detectar entregas.
+    Usa scrape_portaldealer_gwm — busca individual, ~35s por contrato.
+    Retorna {entregues, erros, nao_encontrados}.
+    """
+    from app.scrapers.portaldealer import scrape_portaldealer_gwm
+    from sqlalchemy import and_
+
+    GWM_KEYWORDS = ["haval", "gwm", "ora", "jolion", "h6", "h2", "tank"]
+
+    resultado: dict = {
+        "entregues":        [],
+        "erros":            [],
+        "nao_encontrados":  [],
+    }
+
+    # Carrega contratos GWM ativos (não entregues)
+    async with SessionLocal() as session:
+        res = await session.execute(
+            select(Contrato).where(
+                and_(
+                    Contrato.fonte == "GWM",
+                    Contrato.data_entrega_definitiva.is_(None),
+                )
+            )
+        )
+        contratos_db = res.scalars().all()
+
+    # Filtra apenas os que realmente são GWM/Haval (não Sign & Drive)
+    gwm_reais = [
+        c for c in contratos_db
+        if any(k in (c.veiculo or "").lower() for k in GWM_KEYWORDS)
+    ]
+
+    if not gwm_reais:
+        logger.info("GWM Portal: nenhum contrato pendente")
+        return resultado
+
+    logger.info(f"GWM Portal: consultando {len(gwm_reais)} contratos via CPF...")
+    set_sync_state(message=f"GWM Portal: consultando {len(gwm_reais)} contratos (busca por CPF)...")
+
+    clientes = [
+        {
+            "cliente_cpf_cnpj":    c.cliente_cpf_cnpj,
+            "cliente_nome":        c.cliente_nome,
+            "byetech_contrato_id": c.byetech_contrato_id,
+            "veiculo":             c.veiculo,
+            "placa":               c.placa,
+        }
+        for c in gwm_reais
+    ]
+
+    try:
+        resultados = await scrape_portaldealer_gwm(clientes)
+    except Exception as e:
+        resultado["erros"].append(f"GWM portal scrape: {e}")
+        logger.error(f"GWM portal scrape erro: {e}")
+        return resultado
+
+    # Dedup para Byetech: 1 chamada por CPF
+    _entregas_byetech: dict[str, dict] = {}
+
+    async with SessionLocal() as session:
+        for r in resultados:
+            if r.get("erro"):
+                resultado["nao_encontrados"].append(r.get("cliente_nome", "?"))
+                continue
+
+            # Detecta entrega: "Pedido concluído" + em_contrato
+            if r.get("entregue") or r.get("em_contrato"):
+                data_ent = r.get("data_entrega_definitiva") or datetime.utcnow()
+                r["data_entrega_definitiva"] = data_ent
+                r["status_atual"] = "Definitivo entregue"
+
+                resultado["entregues"].append({
+                    "cliente_nome": r.get("cliente_nome", "—"),
+                    "placa":        r.get("placa", ""),
+                    "veiculo":      r.get("veiculo", "—"),
+                    "data_entrega": data_ent,
+                })
+                cpf_d = r.get("cliente_cpf_cnpj", "")
+                if cpf_d and cpf_d not in _entregas_byetech:
+                    _entregas_byetech[cpf_d] = {
+                        "cpf_raw": cpf_d,
+                        "placa":   r.get("placa", ""),
+                        "data":    data_ent,
+                        "cliente_nome": r.get("cliente_nome", ""),
+                    }
+
+            # Encontrado mas não entregue — atualiza status no banco
+            cpf_r = r.get("cliente_cpf_cnpj", "")
+            fonte_r = "GWM"
+            # Encontra contrato original pelo CPF
+            c_match = next(
+                (c for c in gwm_reais if (c.cliente_cpf_cnpj or "").replace(".", "").replace("-", "") ==
+                 cpf_r.replace(".", "").replace("-", "")),
+                None
+            )
+            if c_match:
+                r["id_externo"] = c_match.id_externo
+                r["byetech_contrato_id"] = c_match.byetech_contrato_id
+                r["fonte"] = "GWM"
+
+            await _upsert_contrato(session, r, portal_update=True)
+        await session.commit()
+
+    # Atualiza Byetech diretamente (await, não create_task)
+    if _entregas_byetech:
+        logger.info(f"[GWM] Atualizando {len(_entregas_byetech)} entrega(s) no Byetech...")
+        try:
+            from app.scrapers.byetech_crm import update_delivery_by_cpf as _upd_byetech
+        except ImportError:
+            _upd_byetech = None
+
+        for i, (_, info) in enumerate(_entregas_byetech.items(), 1):
+            nome  = info["cliente_nome"]
+            cpf_r = info["cpf_raw"]
+            placa = info["placa"]
+            data  = info["data"]
+            try:
+                if _upd_byetech:
+                    ok = await _upd_byetech(cpf_raw=cpf_r, data_entrega=data, placa=placa or None)
+                    if ok:
+                        logger.info(f"[GWM Byetech {i}/{len(_entregas_byetech)}] OK — {nome}")
+                    else:
+                        logger.warning(f"[GWM Byetech {i}/{len(_entregas_byetech)}] False — {nome}")
+                        await _enfileirar_byetech("", cpf_r, placa, data, nome)
+                        resultado["erros"].append(f"Byetech GWM {nome}: update retornou False")
+                else:
+                    await _enfileirar_byetech("", cpf_r, placa, data, nome)
+            except Exception as _be:
+                logger.error(f"[GWM Byetech {i}/{len(_entregas_byetech)}] Erro {nome}: {_be}")
+                await _enfileirar_byetech("", cpf_r, placa, data, nome)
+                resultado["erros"].append(f"Byetech GWM {nome}: {str(_be)[:80]}")
+
+    logger.info(
+        f"GWM Portal sync: {len(resultado['entregues'])} entregas | "
+        f"{len(resultado['nao_encontrados'])} não encontrados | "
+        f"{len(resultado['erros'])} erros"
     )
     return resultado
 
