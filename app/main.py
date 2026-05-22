@@ -173,6 +173,79 @@ async def get_contratos(db: AsyncSession = Depends(get_db)):
     }
 
 
+@app.get("/api/contratos/entregues")
+async def get_contratos_entregues(
+    db: AsyncSession = Depends(get_db),
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    fonte: Optional[str] = None,
+    search: Optional[str] = None,
+    page: int = 1,
+    per_page: int = 100,
+):
+    """
+    Lista contratos já entregues com filtros opcionais.
+    - from_date / to_date : YYYY-MM-DD (filtra data_entrega_definitiva)
+    - fonte               : locadora (GWM, MOVIDA, etc.)
+    - search              : nome, CPF, placa, veículo
+    - page / per_page     : paginação
+    """
+    from sqlalchemy import and_
+    from collections import Counter
+
+    conditions = [Contrato.data_entrega_definitiva.is_not(None)]
+
+    if from_date:
+        try:
+            dt_from = datetime.strptime(from_date, "%Y-%m-%d")
+            conditions.append(Contrato.data_entrega_definitiva >= dt_from)
+        except ValueError:
+            pass
+
+    if to_date:
+        try:
+            dt_to = datetime.strptime(to_date, "%Y-%m-%d")
+            from datetime import timedelta
+            conditions.append(Contrato.data_entrega_definitiva < dt_to + timedelta(days=1))
+        except ValueError:
+            pass
+
+    if fonte:
+        conditions.append(Contrato.fonte == fonte)
+
+    result = await db.execute(
+        select(Contrato)
+        .where(and_(*conditions))
+        .order_by(Contrato.data_entrega_definitiva.desc())
+    )
+    all_rows = result.scalars().all()
+
+    if search:
+        s = search.lower()
+        all_rows = [
+            c for c in all_rows
+            if s in (c.cliente_nome or "").lower()
+            or s in (c.cliente_cpf_cnpj or "").lower()
+            or s in (c.placa or "").lower()
+            or s in (c.veiculo or "").lower()
+        ]
+
+    total = len(all_rows)
+    offset = (page - 1) * per_page
+    page_rows = all_rows[offset: offset + per_page]
+
+    por_fonte = dict(Counter(c.fonte for c in all_rows if c.fonte))
+
+    return {
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "pages": max(1, -(-total // per_page)),
+        "por_fonte": por_fonte,
+        "contratos": [_contrato_to_dict(c) for c in page_rows],
+    }
+
+
 @app.get("/api/contratos/{contrato_id}")
 async def get_contrato(contrato_id: str, db: AsyncSession = Depends(get_db)):
     import json, re as _re
@@ -1429,81 +1502,6 @@ async def health_check():
 @app.get("/entregues", response_class=HTMLResponse)
 async def entregues_page(request: Request):
     return templates.TemplateResponse(request, "entregues.html")
-
-
-@app.get("/api/contratos/entregues")
-async def get_contratos_entregues(
-    db: AsyncSession = Depends(get_db),
-    from_date: Optional[str] = None,
-    to_date: Optional[str] = None,
-    fonte: Optional[str] = None,
-    search: Optional[str] = None,
-    page: int = 1,
-    per_page: int = 100,
-):
-    """
-    Lista contratos já entregues com filtros opcionais.
-    - from_date / to_date : YYYY-MM-DD (filtra data_entrega_definitiva)
-    - fonte               : locadora (GWM, MOVIDA, etc.)
-    - search              : nome, CPF, placa, veículo
-    - page / per_page     : paginação
-    """
-    from sqlalchemy import and_
-    from collections import Counter
-
-    conditions = [Contrato.data_entrega_definitiva.is_not(None)]
-
-    if from_date:
-        try:
-            dt_from = datetime.strptime(from_date, "%Y-%m-%d")
-            conditions.append(Contrato.data_entrega_definitiva >= dt_from)
-        except ValueError:
-            pass
-
-    if to_date:
-        try:
-            dt_to = datetime.strptime(to_date, "%Y-%m-%d")
-            from datetime import timedelta
-            conditions.append(Contrato.data_entrega_definitiva < dt_to + timedelta(days=1))
-        except ValueError:
-            pass
-
-    if fonte:
-        conditions.append(Contrato.fonte == fonte)
-
-    result = await db.execute(
-        select(Contrato)
-        .where(and_(*conditions))
-        .order_by(Contrato.data_entrega_definitiva.desc())
-    )
-    all_rows = result.scalars().all()
-
-    # Filtro de texto em Python (SQLite não tem ILIKE)
-    if search:
-        s = search.lower()
-        all_rows = [
-            c for c in all_rows
-            if s in (c.cliente_nome or "").lower()
-            or s in (c.cliente_cpf_cnpj or "").lower()
-            or s in (c.placa or "").lower()
-            or s in (c.veiculo or "").lower()
-        ]
-
-    total = len(all_rows)
-    offset = (page - 1) * per_page
-    page_rows = all_rows[offset: offset + per_page]
-
-    # Stats por locadora
-    por_fonte = dict(Counter(c.fonte for c in all_rows if c.fonte))
-
-    return {
-        "total": total,
-        "page": page,
-        "per_page": per_page,
-        "pages": max(1, -(-total // per_page)),
-        "por_fonte": por_fonte,
-        "contratos": [_contrato_to_dict(c) for c in page_rows],
-    }
 
 
 # ── Dashboard: página de analytics ──────────────────────
