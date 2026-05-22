@@ -152,6 +152,103 @@ def clear_session():
         pass
 
 
+# ── Login direto via API (sem browser) ───────────────────
+async def _login_via_api(twofa_code: str = None) -> Optional[dict]:
+    """
+    Faz login no Byetech CRM usando httpx puro, sem Playwright.
+    Fluxo Laravel Fortify + Sanctum:
+      1. GET  /sanctum/csrf-cookie   → obtém XSRF-TOKEN
+      2. POST /login                 → autentica (pode retornar two_factor=true)
+      3. POST /two-factor-challenge  → resolve 2FA se necessário
+    Retorna dict de cookies ou None se o fluxo não for suportado.
+    Lança "2FA_REQUIRED" quando 2FA é obrigatório e twofa_code não foi fornecido.
+    """
+    if not BYETECH_EMAIL or not BYETECH_PASS:
+        return None
+
+    import urllib.parse as _up
+
+    try:
+        async with httpx.AsyncClient(
+            base_url=BYETECH_URL,
+            follow_redirects=True,
+            timeout=30,
+        ) as client:
+            # 1. CSRF
+            await client.get("/sanctum/csrf-cookie")
+            xsrf = _up.unquote(client.cookies.get("XSRF-TOKEN", ""))
+
+            hdrs = {
+                "X-XSRF-TOKEN": xsrf,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "Referer": BYETECH_URL + "/",
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                ),
+            }
+
+            # 2. Login
+            r = await client.post("/login", json={
+                "email": BYETECH_EMAIL,
+                "password": BYETECH_PASS,
+            }, headers=hdrs)
+
+            if r.status_code == 422:
+                logger.warning("[Byetech] Login via API: credenciais inválidas (422)")
+                return None
+            if r.status_code == 404:
+                logger.warning("[Byetech] Login via API: endpoint /login não encontrado (404)")
+                return None
+            if r.status_code not in (200, 201, 204):
+                logger.warning(f"[Byetech] Login via API: HTTP {r.status_code}")
+                return None
+
+            xsrf = _up.unquote(client.cookies.get("XSRF-TOKEN", xsrf))
+            hdrs["X-XSRF-TOKEN"] = xsrf
+
+            try:
+                body = r.json()
+            except Exception:
+                body = {}
+
+            if body.get("two_factor"):
+                if not twofa_code:
+                    raise Exception("2FA_REQUIRED")
+                r2 = await client.post("/two-factor-challenge", json={
+                    "code": twofa_code,
+                }, headers=hdrs)
+                if r2.status_code not in (200, 201, 204):
+                    logger.warning(f"[Byetech] 2FA via API falhou: HTTP {r2.status_code}")
+                    return None
+                xsrf = _up.unquote(client.cookies.get("XSRF-TOKEN", xsrf))
+
+            cookies_dict = dict(client.cookies)
+            if not cookies_dict:
+                logger.warning("[Byetech] Login via API: sem cookies retornados")
+                return None
+
+            # Garante XSRF atualizado no dict
+            if xsrf:
+                cookies_dict["XSRF-TOKEN"] = _up.quote(xsrf)
+
+            ok = await _test_session(cookies_dict)
+            if not ok:
+                logger.warning("[Byetech] Login via API: cookies obtidos mas sessão inválida")
+                return None
+
+            logger.info("[Byetech] ✅ Login via API bem-sucedido (sem Playwright)")
+            return cookies_dict
+
+    except Exception as e:
+        if "2FA_REQUIRED" in str(e):
+            raise
+        logger.warning(f"[Byetech] Login via API falhou: {type(e).__name__}: {e}")
+        return None
+
+
 # ── Login via browser ─────────────────────────────────────
 def _login_via_subprocess(twofa_code: str | None) -> dict:
     """
@@ -181,17 +278,34 @@ def _login_via_subprocess(twofa_code: str | None) -> dict:
 
 async def _login_and_get_cookies(twofa_callback=None) -> dict:
     """
-    Faz login completo via Playwright e retorna os cookies de sessão.
-    Usa subprocesso separado para ter ProactorEventLoop próprio (Windows/Python 3.14).
+    Faz login completo. Ordem de tentativas:
+      1. Login via API httpx (sem browser) — funciona no Render se o endpoint existir
+      2. Login via Playwright (subprocesso) — fallback local se a API não funcionar
     """
-    # Primeira tentativa: sem código 2FA
+    # ── 1. Tentativa via API (funciona no Render, sem Playwright) ──
+    try:
+        cookies = await _login_via_api(twofa_code=None)
+        if cookies:
+            return cookies
+    except Exception as e:
+        if "2FA_REQUIRED" in str(e):
+            # API confirmou que 2FA é necessário
+            if twofa_callback is None:
+                raise Exception(
+                    "2FA_REQUIRED: Login Byetech requer código 2FA via API."
+                )
+            code = await twofa_callback()
+            cookies = await _login_via_api(twofa_code=code)
+            if cookies:
+                return cookies
+
+    # ── 2. Fallback: Playwright (apenas ambientes com browser) ────
     try:
         return await asyncio.to_thread(_login_via_subprocess, None)
     except Exception as e:
         if "2FA_REQUIRED" not in str(e):
             raise
 
-    # 2FA necessário — obtém o código via callback e tenta novamente
     if twofa_callback is None:
         raise Exception(
             "2FA_REQUIRED: Login Byetech requer código 2FA. "

@@ -84,22 +84,38 @@ async def _fetch_metabase(params_json: list = None) -> list[dict]:
     return []
 
 
-async def fetch_all_active() -> list[dict]:
-    """Busca todos os contratos ativos (exclui Definitivo entregue)."""
+async def fetch_all_active(include_recent_delivered_days: int = 30) -> list[dict]:
+    """
+    Busca todos os contratos ativos + contratos entregues nos últimos N dias.
+
+    Inclui recém-entregues para que run_metabase_sync consiga detectar a transição
+    "pendente → entregue" e notificar o Byetech CRM automaticamente.
+    """
+    from datetime import timedelta
     rows = await _fetch_metabase()
     logger.info(f"Metabase: {len(rows)} registros totais")
-    ativos = [
-        _row_to_contrato(r) for r in rows
-        if str(r.get("contrato_fase") or "") != "Definitivo entregue"
-        and r.get("contrato_ativo") is not False
-        and not r.get("estorno")
-    ]
-    logger.info(f"Metabase: {len(ativos)} contratos ativos")
-    return ativos
+    cutoff = datetime.utcnow() - timedelta(days=include_recent_delivered_days)
+
+    result = []
+    n_entregues = 0
+    for r in rows:
+        if r.get("contrato_ativo") is False or r.get("estorno"):
+            continue
+        fase = str(r.get("contrato_fase") or "")
+        if fase.lower() in ("definitivo entregue", "definitivo_entregue", "pedido concluído", "pedido concluido"):
+            data_ent = _parse_date(r.get("data_entrega_definitivo"))
+            if data_ent and data_ent >= cutoff:
+                result.append(_row_to_contrato(r))
+                n_entregues += 1
+        else:
+            result.append(_row_to_contrato(r))
+
+    logger.info(f"Metabase: {len(result) - n_entregues} ativos + {n_entregues} entregues recentes")
+    return result
 
 
 async def fetch_contracts_by_date(dt: date) -> list[dict]:
-    """Busca contratos com data de venda igual a dt."""
+    """Busca contratos com data de venda igual a dt (inclui entregues recentes)."""
     dt_str = dt.strftime("%Y-%m-%d")
     params = [{
         "type": "date/range",
@@ -108,9 +124,9 @@ async def fetch_contracts_by_date(dt: date) -> list[dict]:
     }]
     rows = await _fetch_metabase(params)
     logger.info(f"Metabase ({dt_str}): {len(rows)} registros")
+    # Não filtra entregues — permite detectar a transição de status
     return [
         _row_to_contrato(r) for r in rows
-        if str(r.get("contrato_fase") or "") != "Definitivo entregue"
-        and r.get("contrato_ativo") is not False
+        if r.get("contrato_ativo") is not False
         and not r.get("estorno")
     ]

@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Veículos Entregues — Byecar Entregas</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --card: #1a1d27;
+      --border: #2d3048;
+      --accent: #6c63ff;
+      --green: #22c55e;
+      --red: #ef4444;
+      --orange: #f97316;
+      --yellow: #eab308;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --muted2: #64748b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; min-height: 100vh; }
+
+    /* ── Topbar ── */
+    .topbar {
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .topbar-logo { font-size: 18px; font-weight: 700; color: var(--accent); }
+    .topbar-nav a {
+      color: var(--muted);
+      text-decoration: none;
+      margin-left: 20px;
+      font-size: 14px;
+      transition: color 0.2s;
+    }
+    .topbar-nav a:hover { color: var(--text); }
+    .topbar-nav a.active { color: var(--text); font-weight: 600; }
+    .topbar-right { display: flex; align-items: center; gap: 12px; }
+
+    /* ── Container ── */
+    .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+
+    /* ── KPIs ── */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+    .kpi-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 14px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .kpi-card:hover { border-color: var(--accent); }
+    .kpi-card.active { border-color: var(--accent); background: rgba(108,99,255,.1); }
+    .kpi-num { font-size: 32px; font-weight: 800; line-height: 1; margin-bottom: 5px; color: var(--green); }
+    .kpi-card.purple .kpi-num { color: var(--accent); }
+    .kpi-label { font-size: 11px; color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: .5px; }
+
+    /* ── Filters ── */
+    .filters {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 20px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+    .filters input, .filters select {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 7px 12px;
+      font-size: 13px;
+      outline: none;
+    }
+    .filters input:focus, .filters select:focus { border-color: var(--accent); }
+    .filters input[type="text"] { flex: 1; min-width: 180px; }
+    .filters input[type="date"] { width: 140px; }
+    .filter-count { font-size: 13px; color: var(--muted); margin-left: auto; white-space: nowrap; }
+    .btn-export {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 7px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .btn-export:hover { opacity: 0.88; }
+    .btn-clear {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--muted);
+      padding: 7px 12px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .btn-clear:hover { border-color: var(--red); color: var(--red); }
+
+    /* ── Table ── */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead { position: sticky; top: 57px; z-index: 10; }
+    th {
+      text-align: left;
+      padding: 10px 12px;
+      color: var(--muted);
+      background: var(--card);
+      border-bottom: 2px solid var(--border);
+      font-weight: 500;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    th:hover { color: var(--text); }
+    th .sort-arrow { margin-left: 4px; opacity: 0.4; }
+    th.sorted .sort-arrow { opacity: 1; color: var(--accent); }
+    td { padding: 10px 12px; border-bottom: 1px solid rgba(45,48,72,.5); vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(108,99,255,.04); }
+
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 99px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .3px;
+    }
+    .badge-gwm      { background: rgba(108,99,255,.2);  color: #a78bfa; }
+    .badge-sign\ \&\ drive { background: rgba(34,197,94,.2); color: #4ade80; }
+    .badge-lm       { background: rgba(6,182,212,.2);   color: #22d3ee; }
+    .badge-localiza { background: rgba(234,179,8,.2);   color: #facc15; }
+    .badge-movida   { background: rgba(59,130,246,.2);  color: #60a5fa; }
+    .badge-unidas   { background: rgba(168,85,247,.2);  color: #c084fc; }
+    .badge-vw       { background: rgba(249,115,22,.2);  color: #fb923c; }
+    .badge-flua     { background: rgba(244,63,94,.2);   color: #fb7185; }
+    .badge-nissan   { background: rgba(100,116,139,.2); color: #94a3b8; }
+    .badge-outro    { background: rgba(100,116,139,.15); color: var(--muted); }
+
+    .placa {
+      display: inline-block;
+      background: rgba(34,197,94,.1);
+      border: 1px solid rgba(34,197,94,.3);
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-family: monospace;
+      font-size: 12px;
+      color: var(--green);
+      letter-spacing: .5px;
+    }
+    .data-entrega { color: var(--green); font-weight: 600; font-size: 13px; }
+    .dias-apos { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+    /* ── Paginação ── */
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 20px;
+      padding: 16px 0;
+    }
+    .btn-page {
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 6px 14px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .btn-page:hover:not(:disabled) { border-color: var(--accent); }
+    .btn-page:disabled { opacity: 0.4; cursor: default; }
+    .btn-page.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .page-info { font-size: 12px; color: var(--muted); }
+
+    /* ── Empty / loading ── */
+    .empty-msg { text-align: center; padding: 60px 20px; color: var(--muted); font-size: 15px; }
+    .spinner {
+      display: inline-block;
+      width: 28px; height: 28px;
+      border: 3px solid rgba(108,99,255,.25);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      margin-bottom: 10px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-logo">📦 Byecar Entregas</div>
+  <nav class="topbar-nav">
+    <a href="/">Contratos</a>
+    <a href="/entregues" class="active">Entregues</a>
+    <a href="/dashboard">Dashboard</a>
+  </nav>
+  <div class="topbar-right">
+    <span id="last-updated" style="font-size:12px;color:var(--muted)">—</span>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- KPIs -->
+  <div class="kpi-grid" id="kpi-grid">
+    <div class="kpi-card purple" onclick="setFonte('')">
+      <div class="kpi-num" id="kpi-total">—</div>
+      <div class="kpi-label">Total (período)</div>
+    </div>
+  </div>
+
+  <!-- Filtros -->
+  <div class="filters">
+    <input type="text" id="f-search" placeholder="🔍 Nome, CPF, placa, veículo…" oninput="onFilterChange()"/>
+    <select id="f-fonte" onchange="onFilterChange()">
+      <option value="">Todas as locadoras</option>
+      <option value="GWM">GWM</option>
+      <option value="SIGN & DRIVE">Sign &amp; Drive</option>
+      <option value="LM">LM / AssineCar</option>
+      <option value="LOCALIZA">Localiza</option>
+      <option value="MOVIDA">Movida</option>
+      <option value="UNIDAS">Unidas</option>
+      <option value="VW">Volkswagen</option>
+      <option value="FLUA">Flua</option>
+      <option value="NISSAN">Nissan</option>
+    </select>
+    <input type="date" id="f-from" onchange="onFilterChange()" title="Data entrega — de"/>
+    <input type="date" id="f-to"   onchange="onFilterChange()" title="Data entrega — até"/>
+    <span class="filter-count" id="filter-count">—</span>
+    <button class="btn-clear" onclick="clearFilters()">✕ Limpar</button>
+    <button class="btn-export" onclick="exportCSV()">⬇ Exportar CSV</button>
+  </div>
+
+  <!-- Tabela -->
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th onclick="sortBy('fonte')">Locadora <span class="sort-arrow" id="arr-fonte">↕</span></th>
+          <th onclick="sortBy('cliente_nome')">Cliente <span class="sort-arrow" id="arr-cliente_nome">↕</span></th>
+          <th onclick="sortBy('veiculo')">Veículo / Placa <span class="sort-arrow" id="arr-veiculo">↕</span></th>
+          <th onclick="sortBy('data_entrega_definitiva')">Data de Entrega <span class="sort-arrow" id="arr-data_entrega_definitiva">↕</span></th>
+          <th onclick="sortBy('data_prevista_entrega')">Prazo Original <span class="sort-arrow" id="arr-data_prevista_entrega">↕</span></th>
+          <th>Pontualidade</th>
+          <th>Data da Venda</th>
+        </tr>
+      </thead>
+      <tbody id="table-body">
+        <tr><td colspan="7" class="empty-msg"><div class="spinner"></div><br>Carregando…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Paginação -->
+  <div class="pagination" id="pagination"></div>
+
+</div>
+
+<script>
+const PER_PAGE = 100;
+let _state = {
+  data: [],        // todos os contratos carregados (página atual da API)
+  sorted: [],      // após sort local
+  page: 1,
+  totalApi: 0,
+  pagesApi: 1,
+  sortKey: 'data_entrega_definitiva',
+  sortDir: -1,     // -1 = desc
+  fonte: '',
+  search: '',
+  fromDate: '',
+  toDate: '',
+  loading: false,
+};
+
+// Inicializa datas: mês atual por padrão
+(function initDates() {
+  const hoje = new Date();
+  const primeiroDia = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+  document.getElementById('f-from').value = fmtInputDate(primeiroDia);
+  document.getElementById('f-to').value = fmtInputDate(hoje);
+  _state.fromDate = document.getElementById('f-from').value;
+  _state.toDate   = document.getElementById('f-to').value;
+})();
+
+function fmtInputDate(d) {
+  return d.toISOString().split('T')[0];
+}
+
+async function loadData(resetPage = true) {
+  if (_state.loading) return;
+  _state.loading = true;
+  if (resetPage) _state.page = 1;
+
+  const params = new URLSearchParams({
+    page: _state.page,
+    per_page: PER_PAGE,
+  });
+  if (_state.fonte)    params.set('fonte',     _state.fonte);
+  if (_state.fromDate) params.set('from_date', _state.fromDate);
+  if (_state.toDate)   params.set('to_date',   _state.toDate);
+  if (_state.search)   params.set('search',    _state.search);
+
+  try {
+    const res = await fetch('/api/contratos/entregues?' + params);
+    const d   = await res.json();
+
+    _state.totalApi = d.total || 0;
+    _state.pagesApi = d.pages || 1;
+    _state.data     = d.contratos || [];
+
+    renderKpis(d.por_fonte || {}, d.total || 0);
+    applySortAndRender();
+
+    const dt = new Date();
+    document.getElementById('last-updated').textContent =
+      'Atualizado: ' + dt.toLocaleTimeString('pt-BR');
+  } catch(e) {
+    document.getElementById('table-body').innerHTML =
+      `<tr><td colspan="7" class="empty-msg" style="color:#ef4444">Erro ao carregar: ${e.message}</td></tr>`;
+  } finally {
+    _state.loading = false;
+  }
+}
+
+function renderKpis(porFonte, total) {
+  const FONTE_COLOR = {
+    'GWM':'#6c63ff','SIGN & DRIVE':'#22c55e','LM':'#06b6d4',
+    'LOCALIZA':'#eab308','MOVIDA':'#3b82f6','UNIDAS':'#a855f7',
+    'VW':'#f97316','FLUA':'#f43f5e','NISSAN':'#64748b',
+  };
+  let html = `
+    <div class="kpi-card purple" onclick="setFonte('')" style="cursor:pointer">
+      <div class="kpi-num" style="color:var(--accent)">${total}</div>
+      <div class="kpi-label">Total (período)</div>
+    </div>`;
+  Object.entries(porFonte).sort((a,b) => b[1]-a[1]).forEach(([f, n]) => {
+    const col = FONTE_COLOR[f] || '#94a3b8';
+    html += `
+      <div class="kpi-card" onclick="setFonte('${f}')" style="cursor:pointer;${_state.fonte===f?'border-color:'+col+';background:'+col+'18':''}">>
+        <div class="kpi-num" style="color:${col}">${n}</div>
+        <div class="kpi-label">${f}</div>
+      </div>`;
+  });
+  document.getElementById('kpi-grid').innerHTML = html;
+}
+
+function setFonte(f) {
+  _state.fonte = f;
+  document.getElementById('f-fonte').value = f;
+  loadData();
+}
+
+function onFilterChange() {
+  _state.search   = document.getElementById('f-search').value.trim();
+  _state.fonte    = document.getElementById('f-fonte').value;
+  _state.fromDate = document.getElementById('f-from').value;
+  _state.toDate   = document.getElementById('f-to').value;
+  loadData();
+}
+
+function clearFilters() {
+  const hoje = new Date();
+  const primeiroDia = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+  document.getElementById('f-search').value = '';
+  document.getElementById('f-fonte').value  = '';
+  document.getElementById('f-from').value   = fmtInputDate(primeiroDia);
+  document.getElementById('f-to').value     = fmtInputDate(hoje);
+  _state.search = ''; _state.fonte = '';
+  _state.fromDate = document.getElementById('f-from').value;
+  _state.toDate   = document.getElementById('f-to').value;
+  loadData();
+}
+
+function sortBy(key) {
+  if (_state.sortKey === key) {
+    _state.sortDir *= -1;
+  } else {
+    _state.sortKey = key;
+    _state.sortDir = key === 'data_entrega_definitiva' ? -1 : 1;
+  }
+  document.querySelectorAll('th .sort-arrow').forEach(el => el.textContent = '↕');
+  const arrEl = document.getElementById('arr-' + key);
+  if (arrEl) arrEl.textContent = _state.sortDir === 1 ? '↑' : '↓';
+  document.querySelectorAll('th').forEach(th => th.classList.remove('sorted'));
+  document.querySelectorAll('th').forEach(th => {
+    if (th.querySelector('#arr-' + key)) th.classList.add('sorted');
+  });
+  applySortAndRender();
+}
+
+function applySortAndRender() {
+  const key = _state.sortKey;
+  const dir = _state.sortDir;
+  _state.sorted = [..._state.data].sort((a, b) => {
+    let va = a[key], vb = b[key];
+    if (key.includes('data')) {
+      va = va ? new Date(va).getTime() : 0;
+      vb = vb ? new Date(vb).getTime() : 0;
+    } else {
+      va = (va || '').toString().toLowerCase();
+      vb = (vb || '').toString().toLowerCase();
+    }
+    return va < vb ? -dir : va > vb ? dir : 0;
+  });
+  renderTable();
+  renderPagination();
+  document.getElementById('filter-count').textContent =
+    `${_state.totalApi.toLocaleString('pt-BR')} entrega${_state.totalApi !== 1 ? 's' : ''}`;
+}
+
+function renderTable() {
+  const tbody = document.getElementById('table-body');
+  if (!_state.sorted.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-msg">Nenhum veículo entregue encontrado para o período.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = _state.sorted.map(c => {
+    const de      = c.data_entrega_definitiva ? new Date(c.data_entrega_definitiva) : null;
+    const dp      = c.data_prevista_entrega   ? new Date(c.data_prevista_entrega)   : null;
+    const dv      = c.data_venda              ? new Date(c.data_venda)              : null;
+    const pontual = de && dp ? Math.round((de - dp) / 86400000) : null;
+
+    const pontualHtml = pontual === null
+      ? '<span style="color:var(--muted)">—</span>'
+      : pontual <= 0
+        ? `<span style="color:var(--green);font-weight:600">✓ No prazo${pontual < 0 ? ' (+' + Math.abs(pontual) + 'd)' : ''}</span>`
+        : `<span style="color:var(--orange);font-weight:600">⚠ ${pontual}d atraso</span>`;
+
+    const fonteClass = (c.fonte || 'outro').toLowerCase().replace(/ /g, '\\ ').replace(/&/g, '');
+    return `<tr>
+      <td><span class="badge badge-${(c.fonte||'outro').toLowerCase().replace(/ /g,'').replace('&','')}">${esc(c.fonte||'—')}</span></td>
+      <td>
+        <div style="font-weight:600;color:var(--text)">${esc(c.cliente_nome||'—')}</div>
+        <div style="font-size:.72rem;color:var(--muted)">${fmtDoc(c.cliente_cpf_cnpj)}</div>
+      </td>
+      <td>
+        <div style="font-size:.83rem">${esc(c.veiculo||'—')}</div>
+        ${c.placa ? `<span class="placa">${esc(c.placa)}</span>` : '<span style="font-size:.7rem;color:var(--muted)">sem placa</span>'}
+      </td>
+      <td>
+        <div class="data-entrega">${de ? de.toLocaleDateString('pt-BR') : '—'}</div>
+      </td>
+      <td style="font-size:.82rem;color:var(--muted)">${dp ? dp.toLocaleDateString('pt-BR') : '—'}</td>
+      <td>${pontualHtml}</td>
+      <td style="font-size:.82rem;color:var(--muted)">${dv ? dv.toLocaleDateString('pt-BR') : '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderPagination() {
+  const pg = document.getElementById('pagination');
+  if (_state.pagesApi <= 1) { pg.innerHTML = ''; return; }
+
+  let html = `
+    <button class="btn-page" onclick="changePage(${_state.page - 1})" ${_state.page <= 1 ? 'disabled' : ''}>‹ Anterior</button>`;
+
+  const start = Math.max(1, _state.page - 2);
+  const end   = Math.min(_state.pagesApi, _state.page + 2);
+  for (let i = start; i <= end; i++) {
+    html += `<button class="btn-page${i === _state.page ? ' active' : ''}" onclick="changePage(${i})">${i}</button>`;
+  }
+  html += `
+    <button class="btn-page" onclick="changePage(${_state.page + 1})" ${_state.page >= _state.pagesApi ? 'disabled' : ''}>Próxima ›</button>
+    <span class="page-info">Página ${_state.page} de ${_state.pagesApi} · ${_state.totalApi.toLocaleString('pt-BR')} registros</span>`;
+  pg.innerHTML = html;
+}
+
+function changePage(p) {
+  if (p < 1 || p > _state.pagesApi) return;
+  _state.page = p;
+  loadData(false);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function exportCSV() {
+  const headers = ['Locadora','Cliente','CPF/CNPJ','Veículo','Placa','Data Entrega','Prazo Original','Data Venda'];
+  const rows = _state.sorted.map(c => [
+    c.fonte||'',
+    c.cliente_nome||'',
+    c.cliente_cpf_cnpj||'',
+    c.veiculo||'',
+    c.placa||'',
+    c.data_entrega_definitiva ? new Date(c.data_entrega_definitiva).toLocaleDateString('pt-BR') : '',
+    c.data_prevista_entrega   ? new Date(c.data_prevista_entrega).toLocaleDateString('pt-BR') : '',
+    c.data_venda              ? new Date(c.data_venda).toLocaleDateString('pt-BR') : '',
+  ]);
+  const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `entregues_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function fmtDoc(doc) {
+  if (!doc) return '—';
+  const d = doc.replace(/\D/g,'');
+  if (d.length === 11) return d.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/,'$1.$2.$3-$4');
+  if (d.length === 14) return d.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/,'$1.$2.$3/$4-$5');
+  return doc;
+}
+
+// Carrega ao iniciar
+loadData();
+</script>
+</body>
+</html>

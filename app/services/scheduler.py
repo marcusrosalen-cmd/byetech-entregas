@@ -55,6 +55,67 @@ async def _push_session_to_render():
         logger.warning(f"[Scheduler] Push sessão erro: {e}")
 
 
+async def job_renew_byetech_session():
+    """
+    Renova automaticamente a sessão Byetech CRM via API (sem Playwright).
+    Roda às 09:45, antes de todos os syncs do dia.
+    Se a sessão já está válida, não faz nada.
+    Se está expirada, tenta login via API pura (httpx).
+    Notifica Slack apenas se a renovação falhar.
+    """
+    logger.info("⏰ [scheduler] Verificando sessão Byetech...")
+    from app.scrapers.byetech_crm import (
+        _load_session_from_disk, _test_session, _login_via_api,
+        _save_session, set_remote_session,
+    )
+
+    # 1. Testa sessão atual
+    cookies = _load_session_from_disk()
+    if cookies:
+        try:
+            ok = await _test_session(cookies)
+            if ok:
+                logger.info("[scheduler] Sessão Byetech válida — nenhuma ação necessária.")
+                return
+            logger.warning("[scheduler] Sessão Byetech expirada — tentando renovar via API...")
+        except Exception as e:
+            logger.warning(f"[scheduler] Erro ao testar sessão: {e}")
+    else:
+        logger.warning("[scheduler] Sem sessão em disco — tentando login via API...")
+
+    # 2. Tenta renovar via API (não requer Playwright, funciona no Render)
+    try:
+        new_cookies = await _login_via_api(twofa_code=None)
+        if new_cookies:
+            set_remote_session(new_cookies)
+            logger.info("[scheduler] Sessão Byetech renovada com sucesso via API.")
+            return
+    except Exception as e:
+        err_msg = str(e)
+        if "2FA_REQUIRED" in err_msg:
+            logger.warning(
+                "[scheduler] Renovação Byetech requer 2FA — não é possível renovar automaticamente. "
+                "Acesse /byetech/login no painel para fornecer o código."
+            )
+        else:
+            logger.error(f"[scheduler] Falha ao renovar sessão Byetech: {e}")
+
+    # 3. Falhou — notifica Slack
+    try:
+        from app.services.slack_service import get_client, get_or_create_channel
+        channel = await get_or_create_channel()
+        client = get_client()
+        await client.chat_postMessage(
+            channel=channel,
+            text=(
+                ":warning: *Sessão Byetech não renovada* — o sync de hoje usará os dados do banco local.\n"
+                "Acesse o painel e use `/byetech/login` para renovar manualmente, ou execute `push_session_render.py` localmente."
+            ),
+        )
+    except Exception as slack_e:
+        logger.warning(f"[scheduler] Slack notificação sessão: {slack_e}")
+
+
 async def job_sync_all():
     """
     Job diário: scraping completo de todos os portais.
@@ -62,40 +123,6 @@ async def job_sync_all():
     e continua verificando Sign & Drive, Localiza e demais portais normalmente.
     """
     logger.info("⏰ [scheduler] Iniciando sync diario completo...")
-
-    # Verifica sessao Byetech APENAS para log informativo — nao cancela o sync
-    try:
-        from app.scrapers.byetech_crm import _load_session_from_disk, _test_session
-        cookies = _load_session_from_disk()
-        if not cookies:
-            logger.warning(
-                "[scheduler] Sessao Byetech: sem arquivo de sessao — "
-                "contratos serao lidos do banco local."
-            )
-        else:
-            _sessao_ok = await _test_session(cookies)
-            if not _sessao_ok:
-                logger.warning(
-                    "[scheduler] Sessao Byetech EXPIRADA — sync continua usando banco local. "
-                    "Execute push_session_render.py para renovar."
-                )
-                try:
-                    from app.services.slack_service import get_client, get_or_create_channel
-                    channel = await get_or_create_channel()
-                    client = get_client()
-                    await client.chat_postMessage(
-                        channel=channel,
-                        text=(
-                            ":warning: *Sessao Byetech expirada* — sync continua usando contratos do banco local.\n"
-                            "Execute `push_session_render.py` para renovar a sessao e habilitar atualizacoes no Byetech CRM."
-                        ),
-                    )
-                except Exception as _slack_e:
-                    logger.warning(f"[scheduler] Slack aviso sessao: {_slack_e}")
-            else:
-                logger.info("[scheduler] Sessao Byetech OK.")
-    except Exception as _check_e:
-        logger.warning(f"[scheduler] Verificacao de sessao falhou (nao critico): {_check_e}")
 
     try:
         result = await run_full_sync()
@@ -243,6 +270,15 @@ def start_scheduler():
     scheduler = get_scheduler()
     BRA = "America/Sao_Paulo"
 
+    # Renovação automática da sessão Byetech — 09:45 dias úteis (antes de todos os syncs)
+    scheduler.add_job(
+        job_renew_byetech_session,
+        CronTrigger(hour=9, minute=45, day_of_week="mon-fri", timezone=BRA),
+        id="renew_byetech_session",
+        replace_existing=True,
+        name="Renovação sessão Byetech",
+    )
+
     # Sync completo Byetech CRM — 10:00 dias úteis (seg-sex)
     scheduler.add_job(
         job_sync_all,
@@ -282,7 +318,7 @@ def start_scheduler():
     scheduler.start()
     logger.info(
         "✅ Scheduler iniciado — "
-        "Byetech 10:00 (seg-sex) | S&D 10:20 (seg-sex) | "
+        "Sessão 09:45 (seg-sex) | Byetech 10:00 (seg-sex) | S&D 10:20 (seg-sex) | "
         "Metabase 10:45 (seg-sab) | Alertas 11:00 (seg-sex)"
     )
     return scheduler

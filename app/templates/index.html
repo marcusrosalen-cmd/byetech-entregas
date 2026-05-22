@@ -23,6 +23,13 @@
       </div>
     </div>
 
+    <!-- Navegação principal -->
+    <nav style="display:flex;gap:4px;align-items:center">
+      <a href="/" style="color:var(--primary);text-decoration:none;padding:5px 12px;border-radius:6px;font-size:13px;font-weight:600;background:rgba(108,99,255,.12)">Contratos</a>
+      <a href="/entregues" style="color:var(--muted);text-decoration:none;padding:5px 12px;border-radius:6px;font-size:13px;font-weight:500;transition:color .15s" onmouseover="this.style.color='var(--cream)'" onmouseout="this.style.color='var(--muted)'">Entregues</a>
+      <a href="/dashboard" style="color:var(--muted);text-decoration:none;padding:5px 12px;border-radius:6px;font-size:13px;font-weight:500;transition:color .15s" onmouseover="this.style.color='var(--cream)'" onmouseout="this.style.color='var(--muted)'">Dashboard</a>
+    </nav>
+
     <!-- Conexões às plataformas -->
     <div class="header-center" id="platform-status-bar">
       <span class="chip" id="chip-gwm"     title="GWM Sign & Drive">🚗 GWM</span>

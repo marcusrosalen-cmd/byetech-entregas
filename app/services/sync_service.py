@@ -1140,32 +1140,19 @@ async def run_gwm_portaldealer_sync() -> dict:
 async def run_metabase_sync(full: bool = False) -> dict:
     """
     Sincroniza contratos do Metabase.
-    full=True → busca todos os contratos ativos (bootstrap).
-    full=False → busca contratos de hoje + ontem (novas vendas do dia anterior incluídas).
+    Sempre busca todos os contratos ativos + entregues recentes (últimos 30 dias),
+    garantindo que entregas detectadas no Metabase sejam propagadas ao banco local
+    e ao Byetech CRM automaticamente — inclusive Movida e demais locadoras.
 
-    Detecta entregas novas (data_entrega_definitiva transitou de None → data)
-    e notifica o Byetech CRM automaticamente para contratos dos últimos 30 dias.
+    full=True  → mesma query, sem distinção (mantido por compatibilidade).
+    full=False → idem (antes só buscava hoje/ontem por data_venda, o que perdia entregas).
     """
-    from app.scrapers.metabase import fetch_all_active, fetch_contracts_by_date
+    from app.scrapers.metabase import fetch_all_active
     from datetime import date, timedelta
 
     logger.info(f"Metabase sync ({'completo' if full else 'diario'})...")
-
-    if full:
-        contratos = await fetch_all_active()
-    else:
-        today = date.today()
-        yesterday = today - timedelta(days=1)
-        logger.info(f"  → Buscando vendas de hoje ({today}) e ontem ({yesterday})...")
-        contratos_hoje  = await fetch_contracts_by_date(today)
-        contratos_ontem = await fetch_contracts_by_date(yesterday)
-        # Merge, deduplica por id_externo (o de hoje prevalece sobre o de ontem)
-        seen = {}
-        for c in contratos_ontem + contratos_hoje:
-            key = c.get("id_externo") or c.get("cliente_cpf_cnpj") or id(c)
-            seen[key] = c
-        contratos = list(seen.values())
-        logger.info(f"  → {len(contratos_hoje)} hoje | {len(contratos_ontem)} ontem | {len(contratos)} unicos")
+    contratos = await fetch_all_active()
+    logger.info(f"  → {len(contratos)} contratos recebidos do Metabase")
 
     # Contratos que já tinham entrega antes deste sync (para detectar transições)
     async with SessionLocal() as s:
