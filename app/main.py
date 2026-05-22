@@ -951,11 +951,21 @@ async def byetech_login_manual(body: ByetechLoginBody):
         if cookies:
             set_remote_session(cookies)
             return {"ok": True, "msg": "Sessão Byetech ativa!"}
-        return {"ok": False, "dois_fatores": False, "msg": "Credenciais inválidas ou login falhou"}
+        return {"ok": False, "dois_fatores": False, "msg": "Login falhou — verifique as credenciais"}
     except Exception as e:
-        if "2FA_REQUIRED" in str(e):
+        err = str(e)
+        if "2FA_REQUIRED" in err:
             return {"ok": False, "dois_fatores": True, "msg": "Código 2FA necessário"}
-        raise HTTPException(500, str(e))
+        if "CREDENCIAIS_INVALIDAS" in err:
+            return {"ok": False, "dois_fatores": False, "msg": "❌ E-mail ou senha incorretos (422)"}
+        if "CSRF_INVALIDO" in err:
+            return {"ok": False, "dois_fatores": False, "msg": "❌ Erro de segurança CSRF (419) — tente novamente"}
+        if "2FA_FALHOU" in err:
+            return {"ok": False, "dois_fatores": False, "msg": "❌ Código 2FA inválido — tente novamente"}
+        if "SEM_COOKIES" in err:
+            return {"ok": False, "dois_fatores": False, "msg": "❌ Login não gerou sessão — o Byetech pode ter mudado o fluxo de autenticação"}
+        # Erro genérico com detalhe real
+        return {"ok": False, "dois_fatores": False, "msg": f"❌ Erro: {err[:200]}"}
 
 
 @app.post("/api/byetech/login-debug")

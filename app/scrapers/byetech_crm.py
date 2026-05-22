@@ -175,45 +175,69 @@ async def _login_via_api(
 
     import urllib.parse as _up
 
+    UA = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    )
+
     try:
         async with httpx.AsyncClient(
             base_url=BYETECH_URL,
             follow_redirects=True,
             timeout=30,
         ) as client:
-            # 1. CSRF
-            await client.get("/sanctum/csrf-cookie")
-            xsrf = _up.unquote(client.cookies.get("XSRF-TOKEN", ""))
+            # 1. CSRF — busca cookie XSRF-TOKEN
+            await client.get("/sanctum/csrf-cookie", headers={"User-Agent": UA})
+            # Envia o valor RAW (URL-encoded) — Laravel decodifica no servidor
+            xsrf_raw = client.cookies.get("XSRF-TOKEN", "")
+            xsrf     = xsrf_raw  # mantém encoded; Laravel aceita ambos
 
             hdrs = {
                 "X-XSRF-TOKEN": xsrf,
                 "Content-Type": "application/json",
-                "Accept": "application/json",
-                "Referer": BYETECH_URL + "/",
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0.0.0 Safari/537.36"
-                ),
+                "Accept":       "application/json",
+                "Referer":      BYETECH_URL + "/",
+                "Origin":       BYETECH_URL,
+                "User-Agent":   UA,
             }
 
-            # 2. Login
+            # 2. Login — sem follow_redirect para ver status real
             r = await client.post("/login", json={
-                "email": _email,
+                "email":    _email,
                 "password": _senha,
             }, headers=hdrs)
 
-            if r.status_code == 422:
-                logger.warning("[Byetech] Login via API: credenciais inválidas (422)")
-                return None
-            if r.status_code == 404:
-                logger.warning("[Byetech] Login via API: endpoint /login não encontrado (404)")
-                return None
-            if r.status_code not in (200, 201, 204):
-                logger.warning(f"[Byetech] Login via API: HTTP {r.status_code}")
-                return None
+            logger.info(f"[Byetech] POST /login → HTTP {r.status_code}")
 
-            xsrf = _up.unquote(client.cookies.get("XSRF-TOKEN", xsrf))
+            if r.status_code == 419:
+                # CSRF inválido — tenta sem o header XSRF
+                logger.warning("[Byetech] 419 CSRF mismatch — tentando sem X-XSRF-TOKEN")
+                hdrs2 = {k: v for k, v in hdrs.items() if k != "X-XSRF-TOKEN"}
+                r = await client.post("/login", json={
+                    "email":    _email,
+                    "password": _senha,
+                }, headers=hdrs2)
+                logger.info(f"[Byetech] POST /login (sem XSRF) → HTTP {r.status_code}")
+
+            if r.status_code == 422:
+                try:
+                    detail = r.json()
+                except Exception:
+                    detail = r.text[:200]
+                raise Exception(f"CREDENCIAIS_INVALIDAS: {detail}")
+
+            if r.status_code == 419:
+                raise Exception("CSRF_INVALIDO: token XSRF rejeitado (419). Tente novamente.")
+
+            if r.status_code == 404:
+                raise Exception("ENDPOINT_NAO_ENCONTRADO: /login retornou 404")
+
+            if r.status_code not in (200, 201, 204):
+                raise Exception(f"HTTP_{r.status_code}: resposta inesperada do servidor Byetech")
+
+            # Atualiza XSRF após login bem-sucedido
+            xsrf = client.cookies.get("XSRF-TOKEN", xsrf)
             hdrs["X-XSRF-TOKEN"] = xsrf
 
             try:
@@ -228,14 +252,14 @@ async def _login_via_api(
                     "code": twofa_code,
                 }, headers=hdrs)
                 if r2.status_code not in (200, 201, 204):
-                    logger.warning(f"[Byetech] 2FA via API falhou: HTTP {r2.status_code}")
-                    return None
-                xsrf = _up.unquote(client.cookies.get("XSRF-TOKEN", xsrf))
+                    raise Exception(f"2FA_FALHOU: HTTP {r2.status_code}")
+                xsrf = client.cookies.get("XSRF-TOKEN", xsrf)
 
             cookies_dict = dict(client.cookies)
             if not cookies_dict:
-                logger.warning("[Byetech] Login via API: sem cookies retornados")
-                return None
+                raise Exception("SEM_COOKIES: login pareceu OK mas nenhum cookie de sessão foi retornado")
+
+            logger.info(f"[Byetech] Login via API OK — {len(cookies_dict)} cookies")
 
             # Garante XSRF atualizado no dict
             if xsrf:
