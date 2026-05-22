@@ -932,6 +932,32 @@ class PushSessionBody(BaseModel):
     secret: str = ""
 
 
+class ByetechLoginBody(BaseModel):
+    email: str
+    senha: str
+    codigo_2fa: Optional[str] = None
+
+
+@app.post("/api/byetech/login")
+async def byetech_login_manual(body: ByetechLoginBody):
+    """Login manual no Byetech CRM via email + senha + 2FA opcional."""
+    try:
+        from app.scrapers.byetech_crm import _login_via_api, set_remote_session
+        cookies = await _login_via_api(
+            twofa_code=body.codigo_2fa or None,
+            email=body.email,
+            senha=body.senha,
+        )
+        if cookies:
+            set_remote_session(cookies)
+            return {"ok": True, "msg": "Sessão Byetech ativa!"}
+        return {"ok": False, "dois_fatores": False, "msg": "Credenciais inválidas ou login falhou"}
+    except Exception as e:
+        if "2FA_REQUIRED" in str(e):
+            return {"ok": False, "dois_fatores": True, "msg": "Código 2FA necessário"}
+        raise HTTPException(500, str(e))
+
+
 @app.post("/api/byetech/push-session")
 async def push_byetech_session(body: PushSessionBody):
     """

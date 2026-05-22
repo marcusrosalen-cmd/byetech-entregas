@@ -61,12 +61,73 @@
       <button class="btn btn-outline btn-sm" onclick="triggerHealthCheck()" title="Valida todas as conexões do sistema">
         🔌 Conexões
       </button>
+      <button class="btn btn-outline btn-sm" onclick="openByetechLoginModal()" title="Fazer login no Byetech CRM com suas credenciais" style="border-color:var(--warning);color:var(--warning)">
+        🔑 Login Byetech
+      </button>
       <button class="btn btn-primary btn-sm" onclick="openMovidaModal()">
         ↑ Movida
       </button>
     </div>
   </div>
 </header>
+
+<!-- ══════════════════════════════════════════════════════
+     MODAL: LOGIN BYETECH CRM
+══════════════════════════════════════════════════════ -->
+<div id="modal-byetech-login" class="modal hidden">
+  <div class="modal-box modal-sm">
+    <div class="modal-header">
+      <h2>🔑 Login Byetech CRM</h2>
+      <button class="modal-close" onclick="closeModal('modal-byetech-login')">✕</button>
+    </div>
+    <div class="modal-content">
+      <p style="color:var(--text-dim);font-size:.88rem;margin-bottom:1.2rem">
+        Entre com suas credenciais para renovar a sessão do Byetech.<br>
+        A sessão fica salva no servidor para sincronizações automáticas.
+      </p>
+
+      <div id="byetech-login-form">
+        <label style="display:block;font-size:.8rem;color:var(--muted);margin-bottom:.25rem">E-mail</label>
+        <input type="email" id="bt-login-email" placeholder="seu@email.com"
+          style="width:100%;padding:.55rem .75rem;font-size:.9rem;border-radius:6px;
+                 border:1px solid var(--border);background:var(--surface2);
+                 color:var(--cream);outline:none;margin-bottom:.75rem"
+          onkeydown="if(event.key==='Enter') document.getElementById('bt-login-senha').focus()" />
+
+        <label style="display:block;font-size:.8rem;color:var(--muted);margin-bottom:.25rem">Senha</label>
+        <input type="password" id="bt-login-senha" placeholder="••••••••"
+          style="width:100%;padding:.55rem .75rem;font-size:.9rem;border-radius:6px;
+                 border:1px solid var(--border);background:var(--surface2);
+                 color:var(--cream);outline:none;margin-bottom:1.2rem"
+          onkeydown="if(event.key==='Enter') submitByetechLogin()" />
+
+        <div style="display:flex;gap:.75rem">
+          <button id="btn-bt-login" class="btn btn-primary" style="flex:1" onclick="submitByetechLogin()">Entrar</button>
+          <button class="btn btn-ghost" onclick="closeModal('modal-byetech-login')">Cancelar</button>
+        </div>
+      </div>
+
+      <div id="byetech-2fa-form" style="display:none">
+        <p style="color:var(--warning);font-size:.88rem;margin-bottom:.75rem">
+          🔐 Autenticação de dois fatores ativada.<br>
+          Abra seu app autenticador e insira o código.
+        </p>
+        <label style="display:block;font-size:.8rem;color:var(--muted);margin-bottom:.25rem">Código 2FA</label>
+        <input type="text" id="bt-login-2fa" placeholder="000000" maxlength="6" autocomplete="one-time-code"
+          style="width:100%;padding:.55rem .75rem;font-size:1.3rem;letter-spacing:.4rem;text-align:center;
+                 border-radius:6px;border:1px solid var(--border);background:var(--surface2);
+                 color:var(--cream);outline:none;margin-bottom:1.2rem"
+          onkeydown="if(event.key==='Enter') submitByetech2FA()" />
+        <div style="display:flex;gap:.75rem">
+          <button id="btn-bt-2fa" class="btn btn-primary" style="flex:1" onclick="submitByetech2FA()">Confirmar</button>
+          <button class="btn btn-ghost" onclick="document.getElementById('byetech-2fa-form').style.display='none';document.getElementById('byetech-login-form').style.display='block'">Voltar</button>
+        </div>
+      </div>
+
+      <div id="byetech-login-status" style="margin-top:.75rem;font-size:.85rem;min-height:1.2rem"></div>
+    </div>
+  </div>
+</div>
 
 <!-- ══════════════════════════════════════════════════════
      LEMBRETES (injetados dinamicamente via JS)

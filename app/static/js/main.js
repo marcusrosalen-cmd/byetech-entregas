@@ -345,8 +345,12 @@ function renderTable(contracts) {
       </td>
       <td>${stageHtml}</td>
       <td>${byetechHtml}</td>
-      <td style="white-space:nowrap;font-size:.82rem;color:var(--muted)">
-        ${formatDate(c.data_prevista_entrega)}
+      <td style="white-space:nowrap;font-size:.82rem;line-height:1.35">
+        ${c.nova_previsao_entrega && !c.data_entrega_definitiva
+          ? `<div style="color:var(--warning);font-weight:600">🔄 ${formatDate(c.nova_previsao_entrega)}</div>
+             <div style="color:var(--muted);font-size:.72rem;text-decoration:line-through">${formatDate(c.data_prevista_entrega)}</div>`
+          : `<span style="color:var(--muted)">${formatDate(c.data_prevista_entrega)}</span>`
+        }
       </td>
       <td>${diasHtml}</td>
       <td>${acoesHtml}</td>
@@ -387,6 +391,15 @@ function buildDiasCell(c, urgencia, entregue) {
     return `<span class="dias-num entregue">✓ ${formatDate(c.data_entrega_definitiva)}</span>`;
   }
   if (c.dias_para_entrega == null) return '<span class="dias-num" style="color:var(--muted)">–</span>';
+
+  // Com nova previsão: mostra dias até a nova data (atrasado fica como contexto)
+  if (c.nova_previsao_entrega && !c.data_entrega_definitiva) {
+    const d = c.dias_para_entrega;
+    if (d < 0)  return `<span class="dias-num dias-atrasado">⚠ ${Math.abs(d)}d</span>`;
+    if (d === 0) return `<span class="dias-num dias-critico">🔄 hoje</span>`;
+    return `<span class="dias-num ${urgencia.diasClass}">🔄 ${d}d</span>`;
+  }
+
   const abs = Math.abs(c.dias_para_entrega);
   const label = c.atrasado ? `⚠ ${abs}d atrasado` : `${c.dias_para_entrega}d`;
   return `<span class="dias-num ${urgencia.diasClass}">${label}</span>`;
@@ -714,6 +727,90 @@ async function showDetail(id) {
     showToast('Erro ao carregar detalhes: ' + e.message, 'error');
   }
 }
+
+// ── Login Byetech CRM ─────────────────────────────────────
+let _btPendingEmail = '';
+let _btPendingSenha = '';
+
+function openByetechLoginModal() {
+  document.getElementById('byetech-login-form').style.display = 'block';
+  document.getElementById('byetech-2fa-form').style.display   = 'none';
+  document.getElementById('byetech-login-status').textContent = '';
+  document.getElementById('bt-login-email').value = '';
+  document.getElementById('bt-login-senha').value = '';
+  openModal('modal-byetech-login');
+  setTimeout(() => document.getElementById('bt-login-email').focus(), 150);
+}
+
+async function submitByetechLogin() {
+  const email = document.getElementById('bt-login-email').value.trim();
+  const senha = document.getElementById('bt-login-senha').value;
+  const status = document.getElementById('byetech-login-status');
+
+  if (!email || !senha) { status.innerHTML = '<span style="color:var(--danger)">Preencha e-mail e senha.</span>'; return; }
+
+  const btn = document.getElementById('btn-bt-login');
+  btn.disabled = true; btn.textContent = 'Entrando...';
+  status.textContent = '';
+
+  try {
+    const res = await api('/byetech/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, senha, codigo_2fa: null }),
+    });
+
+    if (res.ok) {
+      status.innerHTML = '<span style="color:var(--success)">✅ ' + res.msg + '</span>';
+      setTimeout(() => closeModal('modal-byetech-login'), 1200);
+      _lastSessaoCheck = 0; checkByetechPending();
+    } else if (res.dois_fatores) {
+      _btPendingEmail = email;
+      _btPendingSenha = senha;
+      document.getElementById('byetech-login-form').style.display = 'none';
+      document.getElementById('byetech-2fa-form').style.display   = 'block';
+      document.getElementById('bt-login-2fa').value = '';
+      setTimeout(() => document.getElementById('bt-login-2fa').focus(), 100);
+    } else {
+      status.innerHTML = '<span style="color:var(--danger)">❌ ' + (res.msg || 'Falha no login') + '</span>';
+    }
+  } catch (e) {
+    status.innerHTML = '<span style="color:var(--danger)">Erro: ' + e.message + '</span>';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Entrar';
+  }
+}
+
+async function submitByetech2FA() {
+  const codigo = document.getElementById('bt-login-2fa').value.trim();
+  const status = document.getElementById('byetech-login-status');
+
+  if (!codigo) { status.innerHTML = '<span style="color:var(--danger)">Insira o código 2FA.</span>'; return; }
+
+  const btn = document.getElementById('btn-bt-2fa');
+  btn.disabled = true; btn.textContent = 'Verificando...';
+
+  try {
+    const res = await api('/byetech/login', {
+      method: 'POST',
+      body: JSON.stringify({ email: _btPendingEmail, senha: _btPendingSenha, codigo_2fa: codigo }),
+    });
+
+    if (res.ok) {
+      status.innerHTML = '<span style="color:var(--success)">✅ ' + res.msg + '</span>';
+      setTimeout(() => closeModal('modal-byetech-login'), 1200);
+      _lastSessaoCheck = 0; checkByetechPending();
+    } else {
+      status.innerHTML = '<span style="color:var(--danger)">❌ Código inválido. Tente novamente.</span>';
+      document.getElementById('bt-login-2fa').value = '';
+      document.getElementById('bt-login-2fa').focus();
+    }
+  } catch (e) {
+    status.innerHTML = '<span style="color:var(--danger)">Erro: ' + e.message + '</span>';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Confirmar';
+  }
+}
+
 
 async function saveContrato(id) {
   const obsEl  = document.getElementById(`obs-input-${id}`);

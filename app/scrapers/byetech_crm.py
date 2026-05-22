@@ -153,7 +153,11 @@ def clear_session():
 
 
 # ── Login direto via API (sem browser) ───────────────────
-async def _login_via_api(twofa_code: str = None) -> Optional[dict]:
+async def _login_via_api(
+    twofa_code: str = None,
+    email: str = None,
+    senha: str = None,
+) -> Optional[dict]:
     """
     Faz login no Byetech CRM usando httpx puro, sem Playwright.
     Fluxo Laravel Fortify + Sanctum:
@@ -162,8 +166,11 @@ async def _login_via_api(twofa_code: str = None) -> Optional[dict]:
       3. POST /two-factor-challenge  → resolve 2FA se necessário
     Retorna dict de cookies ou None se o fluxo não for suportado.
     Lança "2FA_REQUIRED" quando 2FA é obrigatório e twofa_code não foi fornecido.
+    email/senha opcionais: se não fornecidos, usa variáveis de ambiente.
     """
-    if not BYETECH_EMAIL or not BYETECH_PASS:
+    _email = email or BYETECH_EMAIL
+    _senha = senha or BYETECH_PASS
+    if not _email or not _senha:
         return None
 
     import urllib.parse as _up
@@ -192,8 +199,8 @@ async def _login_via_api(twofa_code: str = None) -> Optional[dict]:
 
             # 2. Login
             r = await client.post("/login", json={
-                "email": BYETECH_EMAIL,
-                "password": BYETECH_PASS,
+                "email": _email,
+                "password": _senha,
             }, headers=hdrs)
 
             if r.status_code == 422:
