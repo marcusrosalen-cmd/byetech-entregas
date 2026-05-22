@@ -40,7 +40,7 @@
 
     <div class="header-actions">
       <span id="last-sync" class="last-sync">–</span>
-      <button class="btn btn-outline btn-sm" id="btn-renovar" onclick="triggerRenovarSessao()" title="Renova apenas a sessão Byetech (mais rápido que sync completo)" style="display:none">
+      <button class="btn btn-outline btn-sm" id="btn-renovar" onclick="openByetechLoginModal()" title="Sessão Byetech expirada — clique para fazer login" style="display:none;border-color:var(--warning);color:var(--warning)">
         🔑 Renovar sessão
       </button>
       <button class="btn btn-outline btn-sm" id="btn-sync" onclick="triggerSync()">

@@ -1017,22 +1017,34 @@ async def renovar_sessao_byetech():
         return {"ok": False, "message": "Já há uma operação em andamento"}
 
     async def _renovar():
-        set_sync_state(status="needs_2fa", message="Aguardando código 2FA...", system="Byetech CRM")
+        set_sync_state(status="running", message="Renovando sessão Byetech...", system="Byetech CRM")
         try:
-            async def _2fa_cb():
-                return await _wait_twofa_renovar()
+            from app.scrapers.byetech_crm import (
+                _login_via_api, set_remote_session,
+                get_session, clear_session,
+            )
 
-            from app.scrapers.byetech_crm import get_session, clear_session
-            clear_session()
-            cookies = await get_session(twofa_callback=_2fa_cb)
-            set_sync_state(status="running", message="Sessão renovada! Processando pendentes...")
-            logger.info("[Byetech] Sessão renovada com sucesso")
-            await _flush_byetech_pending()
-            pending = _get_pending_count()
-            msg = "Sessão Byetech renovada!" + (f" {pending} pendente(s) restante(s)." if pending else " Todos os pendentes processados.")
-            set_sync_state(status="done", message=msg, atualizados=0)
+            # Tenta primeiro via httpx (sem Playwright) — funciona no Render
+            cookies = await _login_via_api(twofa_code=None)
+            if not cookies:
+                # Fallback: Playwright (só funciona localmente)
+                async def _2fa_cb():
+                    return await _wait_twofa_renovar()
+                clear_session()
+                cookies = await get_session(twofa_callback=_2fa_cb)
+
+            if cookies:
+                set_remote_session(cookies)
+                set_sync_state(status="running", message="Sessão renovada! Processando pendentes...")
+                logger.info("[Byetech] Sessão renovada com sucesso")
+                await _flush_byetech_pending()
+                pending = _get_pending_count()
+                msg = "Sessão Byetech renovada!" + (f" {pending} pendente(s) restante(s)." if pending else " Todos os pendentes processados.")
+                set_sync_state(status="done", message=msg, atualizados=0)
+            else:
+                set_sync_state(status="error", message="Falha no login — credenciais inválidas ou 2FA necessário. Use o modal 🔑 Login Byetech.")
         except TimeoutError:
-            set_sync_state(status="error", message="Tempo esgotado aguardando o código 2FA (5 min). Tente novamente e insira o código mais rápido.")
+            set_sync_state(status="error", message="Tempo esgotado aguardando o código 2FA (5 min). Tente novamente.")
             logger.error("[Byetech] Timeout aguardando 2FA para renovação")
         except Exception as e:
             set_sync_state(status="error", message=f"Erro ao renovar sessão: {e}")

@@ -250,15 +250,15 @@ async function checkByetechPending() {
     if (_byetechPending > 0 || !_byetechSessionOk) {
       el.style.display = 'flex';
       const sessaoMsg = !_byetechSessionOk
-        ? '🔑 <strong>Sessão Byetech expirada.</strong> Execute <code>push_session_render.py</code> localmente.'
+        ? '🔑 <strong>Sessão Byetech expirada.</strong> Faça login para renovar.'
         : '';
       const pendMsg = _byetechPending > 0
         ? `⚠️ <strong>${_byetechPending} entrega(s) pendente(s)</strong> aguardando sessão Byetech válida.`
         : '';
       el.innerHTML = `
         <span style="font-size:.88rem">${[sessaoMsg, pendMsg].filter(Boolean).join(' &nbsp;')}</span>
-        <button class="btn btn-sm btn-outline" onclick="triggerRenovarSessao()" style="margin-left:auto;white-space:nowrap">
-          🔑 Renovar sessão
+        <button class="btn btn-sm btn-outline" onclick="openByetechLoginModal()" style="margin-left:auto;white-space:nowrap;border-color:var(--warning);color:var(--warning)">
+          🔑 Login Byetech
         </button>`;
     } else {
       el.style.display = 'none';
@@ -273,20 +273,9 @@ function resetSessaoCheck() {
   checkByetechPending();
 }
 
-async function triggerRenovarSessao() {
-  const btn = document.getElementById('btn-renovar');
-  if (btn) { btn.disabled = true; btn.textContent = 'Aguardando 2FA...'; }
-  try {
-    const res = await api('/sync/renovar-sessao', { method: 'POST' });
-    if (!res.ok) { showToast(res.message, 'info'); return; }
-    showToast('🔑 Informe o código 2FA no popup.', 'info');
-    _2faShown = false;
-    pollSyncStatus();
-  } catch (e) {
-    showToast('Erro: ' + e.message, 'error');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🔑 Renovar sessão'; }
-  }
+function triggerRenovarSessao() {
+  // Abre o modal de login Byetech (httpx, sem Playwright)
+  openByetechLoginModal();
 }
 
 // ── Platform status chips ─────────────────────────────────
