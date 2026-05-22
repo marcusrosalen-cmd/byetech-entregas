@@ -116,9 +116,21 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 
 # ── Frontend ─────────────────────────────────────────────
+def _static_ver(filename: str) -> str:
+    """Gera versão baseada no mtime do arquivo para cache-busting."""
+    try:
+        path = os.path.join(BASE_DIR, "static", filename)
+        return str(int(os.path.getmtime(path)))
+    except Exception:
+        return "1"
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    return templates.TemplateResponse(request, "index.html")
+    return templates.TemplateResponse(request, "index.html", {
+        "js_ver": _static_ver("js/main.js"),
+        "css_ver": _static_ver("css/style.css"),
+    })
 
 
 # ── API: Contratos ────────────────────────────────────────
