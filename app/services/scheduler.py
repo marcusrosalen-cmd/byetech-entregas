@@ -256,9 +256,38 @@ async def job_signanddrive_daily():
     logger.info("⏰ [scheduler] Sign & Drive sync diário...")
     try:
         result = await run_signanddrive_sync()
-        logger.info(f"✅ [scheduler] Sign & Drive: {result}")
+        n_ent = len(result.get("entregues", []))
+        n_mud = len(result.get("mudancas_status", []))
+        logger.info(f"✅ [scheduler] Sign & Drive: {n_ent} entregues | {n_mud} mudanças de status")
     except Exception as e:
         logger.error(f"❌ [scheduler] Sign & Drive erro: {e}")
+
+
+async def job_gwm_lm_daily():
+    """
+    Job diário (dias úteis): consulta os portais GWM e LM para detectar entregas
+    e mudanças de status. Roda após o Sign & Drive (10:40), antes do Metabase (10:45).
+    Usa contratos do banco local — não requer sessão Byetech ativa.
+    """
+    from app.services.sync_service import run_gwm_lm_validation
+    logger.info("⏰ [scheduler] GWM/LM portal sync diário...")
+    try:
+        result = await run_gwm_lm_validation(days_back=1)
+        n_ent = len(result.get("entregues", []))
+        n_mud = len(result.get("mudancas_status", []))
+        n_err = len(result.get("erros", []))
+        logger.info(
+            f"✅ [scheduler] GWM/LM: {n_ent} entregues | "
+            f"{n_mud} mudanças de status | {n_err} erros"
+        )
+        if result.get("entregues"):
+            for e in result["entregues"]:
+                logger.info(
+                    f"   📦 {e.get('cliente_nome','?')} — {e.get('veiculo','?')} "
+                    f"[{e.get('fonte','?')}]"
+                )
+    except Exception as e:
+        logger.error(f"❌ [scheduler] GWM/LM erro: {e}")
 
 
 def start_scheduler():
@@ -297,6 +326,15 @@ def start_scheduler():
         name="Sign & Drive sync diário",
     )
 
+    # GWM + LM portal sync — 10:40 dias úteis (após Sign & Drive)
+    scheduler.add_job(
+        job_gwm_lm_daily,
+        CronTrigger(hour=10, minute=40, day_of_week="mon-fri", timezone=BRA),
+        id="gwm_lm_daily",
+        replace_existing=True,
+        name="GWM + LM portal sync diário",
+    )
+
     # Metabase sync — 10:45 seg-sab (captura contratos criados no fim de semana)
     scheduler.add_job(
         job_metabase_daily,
@@ -318,7 +356,7 @@ def start_scheduler():
     scheduler.start()
     logger.info(
         "✅ Scheduler iniciado — "
-        "Sessão 09:45 (seg-sex) | Byetech 10:00 (seg-sex) | S&D 10:20 (seg-sex) | "
-        "Metabase 10:45 (seg-sab) | Alertas 11:00 (seg-sex)"
+        "Sessão 09:45 | Byetech 10:00 | S&D 10:20 | "
+        "GWM/LM 10:40 | Metabase 10:45 | Alertas 11:00 (seg-sex)"
     )
     return scheduler
