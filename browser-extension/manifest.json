@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Byetech Entregas — Sync",
+  "version": "1.0.0",
+  "description": "Sincroniza a sessão do Byetech CRM com a plataforma de entregas com um clique.",
+  "permissions": ["cookies", "storage"],
+  "host_permissions": [
+    "https://*.byetech.pro/*",
+    "https://byetech-entregas.onrender.com/*",
+    "http://localhost:*/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Byetech Entregas — Sync",
+    "default_icon": {
+      "16":  "icons/icon16.png",
+      "48":  "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16":  "icons/icon16.png",
+    "48":  "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
