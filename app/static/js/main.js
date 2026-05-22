@@ -609,10 +609,19 @@ async function showDetail(id) {
               c.dias_para_entrega <= 5 ? 'var(--warning)' : 'var(--primary)'
             }">
               ${c.data_prevista_entrega ? formatDate(c.data_prevista_entrega) : '–'}
-              ${c.dias_para_entrega != null && !c.data_entrega_definitiva
-                ? ` <small style="font-size:.8rem;font-weight:400">(${c.atrasado ? '⚠ ' + Math.abs(c.dias_para_entrega) + 'd atrasado' : c.dias_para_entrega + 'd restantes'})</small>`
-                : ''}
+              ${c.atrasado && !c.data_entrega_definitiva
+                ? ` <small style="font-size:.8rem;font-weight:400;color:var(--danger)">⚠ ATRASADO</small>`
+                : c.dias_para_entrega != null && !c.data_entrega_definitiva
+                  ? ` <small style="font-size:.8rem;font-weight:400">(${c.dias_para_entrega}d restantes)</small>`
+                  : ''}
             </span>
+            ${c.nova_previsao_entrega && !c.data_entrega_definitiva ? `
+              <div style="margin-top:.4rem;font-size:.88rem;color:var(--warning);font-weight:600">
+                🔄 Nova previsão: ${formatDate(c.nova_previsao_entrega)}
+                ${c.dias_para_entrega != null
+                  ? ` <span style="font-weight:400;color:var(--muted)">(${c.dias_para_entrega >= 0 ? c.dias_para_entrega + 'd' : Math.abs(c.dias_para_entrega) + 'd atraso ainda'})</span>`
+                  : ''}
+              </div>` : ''}
           </div>
           <div class="detail-item"><label>Entrega definitiva</label>
             <span style="color:${c.data_entrega_definitiva ? 'var(--success)' : 'var(--muted)'}">
@@ -652,6 +661,48 @@ async function showDetail(id) {
         </div>
       </div>
 
+      <!-- Observações & Nova Previsão -->
+      ${!c.data_entrega_definitiva ? `
+      <div class="detail-section">
+        <div class="detail-section-title">Observações & Nova Previsão</div>
+        <div style="display:flex;flex-direction:column;gap:.75rem">
+          <div>
+            <label style="font-size:.8rem;color:var(--muted);display:block;margin-bottom:.3rem">Observação</label>
+            <textarea id="obs-input-${c.id}" rows="3"
+              style="width:100%;padding:.55rem .75rem;font-size:.88rem;border-radius:6px;
+                     border:1px solid var(--border);background:var(--surface2);
+                     color:var(--cream);resize:vertical;outline:none;font-family:inherit"
+              placeholder="Motivo do atraso, contato com cliente, pendências...">${esc(c.observacoes || '')}</textarea>
+          </div>
+          <div>
+            <label style="font-size:.8rem;color:var(--muted);display:block;margin-bottom:.3rem">
+              🔄 Nova previsão de entrega
+              <span style="color:var(--muted);font-weight:400"> — mantém status atrasado</span>
+            </label>
+            <input type="date" id="nova-prev-input-${c.id}"
+              value="${c.nova_previsao_entrega ? c.nova_previsao_entrega.split('T')[0] : ''}"
+              style="padding:.55rem .75rem;font-size:.9rem;border-radius:6px;
+                     border:1px solid var(--border);background:var(--surface2);
+                     color:var(--cream);outline:none;" />
+          </div>
+          <div style="display:flex;gap:.5rem">
+            <button class="btn btn-primary" style="font-size:.85rem;padding:.45rem 1rem"
+              onclick="saveContrato('${c.id}')">💾 Salvar</button>
+            <button class="btn btn-ghost" style="font-size:.85rem;padding:.45rem .8rem"
+              onclick="document.getElementById('obs-input-${c.id}').value='${esc(c.observacoes||'')}';
+                       document.getElementById('nova-prev-input-${c.id}').value='${c.nova_previsao_entrega ? c.nova_previsao_entrega.split('T')[0] : ''}'">
+              Cancelar
+            </button>
+          </div>
+        </div>
+      </div>` : `
+      <div class="detail-section">
+        <div class="detail-section-title">Observações</div>
+        <p style="font-size:.88rem;color:${c.observacoes ? 'var(--text)' : 'var(--muted)'};white-space:pre-wrap">
+          ${c.observacoes ? esc(c.observacoes) : '—'}
+        </p>
+      </div>`}
+
       <!-- Histórico -->
       <div class="detail-section">
         <div class="detail-section-title">Histórico de Mudanças</div>
@@ -663,6 +714,24 @@ async function showDetail(id) {
     showToast('Erro ao carregar detalhes: ' + e.message, 'error');
   }
 }
+
+async function saveContrato(id) {
+  const obsEl  = document.getElementById(`obs-input-${id}`);
+  const prevEl = document.getElementById(`nova-prev-input-${id}`);
+
+  const body = {};
+  if (obsEl)  body.observacoes            = obsEl.value;
+  if (prevEl) body.nova_previsao_entrega  = prevEl.value || '';
+
+  try {
+    await api(`/contratos/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+    showToast('Salvo com sucesso!', 'success');
+    showDetail(id);   // recarrega o modal com os dados atualizados
+  } catch (e) {
+    showToast('Erro ao salvar: ' + e.message, 'error');
+  }
+}
+
 
 function buildDetailPlatforms(c) {
   const items = [

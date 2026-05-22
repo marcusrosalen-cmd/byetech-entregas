@@ -306,6 +306,40 @@ class EntregarBody(BaseModel):
     data_entrega: str  # YYYY-MM-DD
 
 
+class PatchContratoBody(BaseModel):
+    observacoes: Optional[str] = None
+    nova_previsao_entrega: Optional[str] = None  # YYYY-MM-DD
+
+
+@app.patch("/api/contratos/{contrato_id}")
+async def patch_contrato(contrato_id: str, body: PatchContratoBody, db: AsyncSession = Depends(get_db)):
+    """Atualiza observações e/ou nova previsão de entrega sem remover status de atraso."""
+    result = await db.execute(select(Contrato).where(Contrato.id == contrato_id))
+    c = result.scalar_one_or_none()
+    if not c:
+        raise HTTPException(404, "Contrato não encontrado")
+
+    if body.observacoes is not None:
+        c.observacoes = body.observacoes.strip() or None
+
+    if body.nova_previsao_entrega is not None:
+        if body.nova_previsao_entrega == "":
+            c.nova_previsao_entrega = None
+        else:
+            try:
+                nova_data = datetime.strptime(body.nova_previsao_entrega, "%Y-%m-%d")
+            except ValueError:
+                raise HTTPException(400, "Formato de data inválido. Use YYYY-MM-DD")
+            c.nova_previsao_entrega = nova_data
+            # Recalcula dias com base na nova previsão, mas mantém atrasado=True
+            hoje = datetime.utcnow().date()
+            c.dias_para_entrega = (nova_data.date() - hoje).days
+
+    c.ultima_atualizacao = datetime.utcnow()
+    await db.commit()
+    return {"ok": True, "id": contrato_id}
+
+
 @app.post("/api/contratos/{contrato_id}/entregar")
 async def marcar_entregue(contrato_id: str, body: EntregarBody, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Contrato).where(Contrato.id == contrato_id))
@@ -1690,6 +1724,7 @@ def _contrato_to_dict(c: Contrato) -> dict:
         "dias_para_entrega": c.dias_para_entrega,
         "atrasado": c.atrasado,
         "observacoes": c.observacoes,
+        "nova_previsao_entrega": iso(c.nova_previsao_entrega),
         "data_venda": iso(c.data_venda),
         "pedido_id_locadora": c.pedido_id_locadora,
         "ultima_atualizacao": iso(c.ultima_atualizacao),
