@@ -1194,8 +1194,10 @@ async function triggerHealthCheck() {
     };
 
     const rows = Object.entries(conn).map(([key, val]) => {
-      const icon   = val.ok ? '✅' : '❌';
-      const color  = val.ok ? 'var(--success)' : 'var(--danger)';
+      // warning=true: ok mas com ressalva (ex: Playwright ausente no Render — esperado)
+      const isWarn = val.ok && val.warning;
+      const icon   = val.ok ? (isWarn ? '⚠️' : '✅') : '❌';
+      const color  = val.ok ? (isWarn ? 'var(--warning)' : 'var(--success)') : 'var(--danger)';
       const label  = LABELS[key] || key;
       return `
         <div style="display:flex;align-items:flex-start;gap:.75rem;padding:.6rem 0;border-bottom:1px solid var(--border)">
@@ -1207,9 +1209,11 @@ async function triggerHealthCheck() {
         </div>`;
     }).join('');
 
-    const globalIcon  = data.ok ? '✅' : '⚠️';
-    const globalColor = data.ok ? 'var(--success)' : 'var(--warning)';
-    const globalMsg   = data.ok ? 'Todas as conexões OK' : 'Uma ou mais conexões com problema';
+    // Global: só erro real (ok=false) causa ⚠️ — warnings não contam como problema
+    const hasError    = Object.values(conn).some(v => !v.ok);
+    const globalIcon  = hasError ? '⚠️' : '✅';
+    const globalColor = hasError ? 'var(--warning)' : 'var(--success)';
+    const globalMsg   = hasError ? 'Uma ou mais conexões com problema' : 'Todas as conexões OK';
 
     box.innerHTML = `
       <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:1rem;

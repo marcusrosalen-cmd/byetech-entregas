@@ -1597,6 +1597,13 @@ async def health_check():
     async def check_portal(fonte: str):
         try:
             from app.scrapers.portaldealer import ACCOUNTS, PORTAL_URL
+        except Exception as e:
+            if "playwright" in str(e).lower() or "No module named" in str(e):
+                # Playwright não está instalado no Render — comportamento normal
+                return {"ok": True, "warning": True,
+                        "detail": "Playwright não disponível no Render — sync via script local (_agendar_portais.bat)"}
+            return {"ok": False, "detail": str(e)}
+        try:
             acc = ACCOUNTS.get(fonte, {})
             login = acc.get("login", "")
             pwd   = acc.get("password", "")
@@ -1632,7 +1639,9 @@ async def health_check():
             smtp_host = os.getenv("SMTP_HOST", "")
             smtp_user = os.getenv("SMTP_USER", "") or os.getenv("EMAIL_USER", "")
             if not smtp_host or not smtp_user:
-                return {"ok": False, "detail": "SMTP_HOST / SMTP_USER não configurados no .env"}
+                # Não crítico — e-mail é opcional no Render
+                return {"ok": True, "warning": True,
+                        "detail": "SMTP não configurado no Render — adicione SMTP_HOST e SMTP_USER nas env vars do serviço"}
             return {"ok": True, "detail": f"Configurado: {smtp_user} via {smtp_host}"}
         except Exception as e:
             return {"ok": False, "detail": str(e)}
@@ -1656,8 +1665,11 @@ async def health_check():
         check_email(),
     )
 
+    # warning=True significa ok mas com ressalva (ex: Playwright ausente no Render)
+    # Não conta como falha para o status geral
     all_ok = all(v["ok"] for v in results.values())
     return {"ok": all_ok, "connections": results}
+
 
 
 # ── Entregues: página de histórico de entregas ───────────
