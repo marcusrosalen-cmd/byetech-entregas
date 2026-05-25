@@ -534,6 +534,36 @@ async def _rebuild_cpf_map() -> int:
             _json.dump(cpf_map, f)
 
         logger.info(f"[Byetech] Mapa CPF reconstruido: {len(contratos)} contratos → {len(cpf_map)} entradas → {map_path}")
+
+        # Atualiza pedido_portal_id (ID real da locadora) nos contratos do banco
+        # Aproveita o _raw retornado por _contract_to_dict para buscar o campo correto
+        _pedidos_atualizados = 0
+        try:
+            from app.services.sync_service import _upsert_contrato as _ups
+            from app.database import SessionLocal as _SL2
+            async with _SL2() as _s2:
+                for c in contratos:
+                    pid_portal = c.get("pedido_id_portal")
+                    if not pid_portal:
+                        continue
+                    id_ext = c.get("id_externo", "")
+                    cpf_r  = c.get("cliente_cpf_cnpj", "")
+                    fonte  = c.get("fonte", "")
+                    if not (id_ext or cpf_r):
+                        continue
+                    await _ups(_s2, {
+                        "fonte":            fonte,
+                        "id_externo":       id_ext,
+                        "cliente_cpf_cnpj": cpf_r,
+                        "pedido_id_portal": pid_portal,
+                    }, portal_update=True)
+                    _pedidos_atualizados += 1
+                await _s2.commit()
+            if _pedidos_atualizados:
+                logger.info(f"[Byetech] {_pedidos_atualizados} pedido_portal_id atualizados no banco")
+        except Exception as _e_pid:
+            logger.warning(f"[Byetech] Falha ao atualizar pedido_portal_id: {_e_pid}")
+
         return len(contratos)
     except Exception as e:
         logger.warning(f"[Byetech] Falha ao reconstruir mapa CPF: {e}")
@@ -1515,6 +1545,57 @@ async def sync_gwm_portal():
 
     asyncio.create_task(_run())
     return {"ok": True, "message": "Sync GWM Portal iniciada. Resultado chegara no Slack."}
+
+
+@app.get("/api/debug/contrato-crm/{byetech_id}")
+async def debug_contrato_crm(byetech_id: str, token: str = ""):
+    """
+    Debug: retorna o JSON bruto de um contrato da API Byetech CRM.
+    Útil para descobrir o nome do campo que armazena o ID na locadora.
+    Protegido: ?token= deve ser igual aos primeiros 16 chars de SECRET_KEY.
+    Exemplo: GET /api/debug/contrato-crm/12345?token=abc123
+    """
+    secret = os.getenv("SECRET_KEY", "")
+    if secret and token != secret[:16]:
+        raise HTTPException(403, "Token inválido — passe ?token= com os 16 primeiros chars de SECRET_KEY")
+
+    import httpx as _httpx
+    try:
+        from app.scrapers.byetech_crm import get_session, _make_headers, API_URL as _API_URL
+        cookies = await get_session()
+        headers = _make_headers(cookies)
+        async with _httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+            resp = await client.get(
+                f"{_API_URL}/api/contracts/{byetech_id}",
+                headers=headers,
+                cookies=cookies,
+            )
+        if resp.status_code != 200:
+            return {"status": resp.status_code, "body": resp.text[:500]}
+
+        data = resp.json()
+        # Achata o objeto para visualização fácil (exclui arrays aninhados)
+        def _flatten(obj, prefix=""):
+            out = {}
+            if not isinstance(obj, dict):
+                return out
+            for k, v in obj.items():
+                key = f"{prefix}.{k}" if prefix else k
+                if isinstance(v, dict):
+                    out.update(_flatten(v, key))
+                elif not isinstance(v, list):
+                    out[key] = v
+            return out
+
+        contract_obj = data.get("data", {}).get("contract", data) if isinstance(data, dict) else data
+        flat = _flatten(contract_obj)
+        return {
+            "status": resp.status_code,
+            "chaves_flat": flat,
+            "raw": contract_obj,
+        }
+    except Exception as e:
+        return {"error": str(e), "type": type(e).__name__}
 
 
 @app.get("/api/health")

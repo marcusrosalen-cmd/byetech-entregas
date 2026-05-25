@@ -31,6 +31,9 @@ API_URL       = "https://api-production.byetech.pro"
 BYETECH_EMAIL = os.getenv("BYETECH_EMAIL")
 BYETECH_PASS  = os.getenv("BYETECH_PASSWORD")
 
+# Controla log de descoberta de campos (1 vez por tipo de locadora para não poluir)
+_logged_contract_keys: set = set()
+
 # IDs de fase do Byetech CRM
 PHASE_ID_ENTREGUE = "9f727a78-6cfb-456b-a4b2-2189edd8ebdb"  # "Definitivo entregue"
 PHASE_NAMES = {
@@ -473,6 +476,8 @@ def _contract_to_dict(c: dict) -> dict:
     Normaliza um contrato da API Byetech para o formato interno.
     Estrutura real: contrato → order → {client, vehicle, rental_company, opportunity}
     """
+    global _logged_contract_keys
+
     order = c.get("order") or {}
 
     # Cliente
@@ -500,6 +505,34 @@ def _contract_to_dict(c: dict) -> dict:
     data_prevista  = _parse_date(c.get("retirada_provisorio"))
     data_definitiva = _parse_date(c.get("entrega_definitivo"))
 
+    # ── ID real da locadora (referência do pedido na locadora, não ID interno Byetech) ──
+    # Tenta vários nomes de campo candidatos (Laravel usa snake_case; SPA pode usar camelCase)
+    # O campo exibido no CRM como "ID NA LOCADORA" pode estar em qualquer um destes:
+    _locadora_id = (
+        c.get("id_na_locadora")             # snake_case direto no contrato (mais provável)
+        or c.get("idNaLocadora")            # camelCase no contrato
+        or c.get("locadora_id")             # abreviado
+        or c.get("pedido_locadora")         # nome alternativo
+        or c.get("locadora_order_id")       # variante inglesa
+        or order.get("id_na_locadora")      # dentro do sub-objeto order
+        or order.get("idNaLocadora")
+        or order.get("locadora_id")
+        or order.get("locadora_order_id")
+        or rental.get("pedido_id")          # dentro do rental_company
+        or rental.get("order_id")
+    )
+
+    # Log diagnóstico (1 vez por tipo de locadora) — para descobrir o campo correto nos logs
+    log_key = (locadora_nome or "OUTRO").upper()[:15]
+    if log_key not in _logged_contract_keys:
+        _logged_contract_keys.add(log_key)
+        _scalar_c = [k for k, v in c.items() if not isinstance(v, (dict, list))]
+        _scalar_o = [k for k, v in order.items() if not isinstance(v, (dict, list))]
+        logger.info(
+            f"[CRM] Chaves contrato ({locadora_nome or 'sem locadora'}) — "
+            f"top: {_scalar_c} | order: {_scalar_o}"
+        )
+
     return {
         "byetech_contrato_id": str(c.get("uuid") or c.get("id") or ""),
         "id_externo": str(c.get("id") or ""),
@@ -513,6 +546,7 @@ def _contract_to_dict(c: dict) -> dict:
         "data_prevista_entrega": data_prevista,
         "data_entrega_definitiva": data_definitiva,
         "locadora_nome": locadora_nome,
+        "pedido_id_portal": str(_locadora_id) if _locadora_id else None,
         "_raw": c,
     }
 

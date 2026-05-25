@@ -416,6 +416,8 @@ async def run_full_sync(twofa_event_fn=None) -> dict:
                     "veiculo": c.get("veiculo", ""),
                     "placa": c.get("placa", ""),
                     "data_prevista_entrega": c.get("data_prevista_entrega"),
+                    # ID real da locadora (extraído da API Byetech CRM, não do Metabase)
+                    "pedido_id_portal": c.get("pedido_id_portal"),
                 }
 
                 # Agrupa por locadora para scraping secundário
