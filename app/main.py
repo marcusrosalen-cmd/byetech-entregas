@@ -973,36 +973,43 @@ async def byetech_login_debug(body: ByetechLoginBody):
     """Diagnóstico do login Byetech — retorna status HTTP e body bruto para debug."""
     import urllib.parse as _up
     import httpx as _httpx
-    from app.scrapers.byetech_crm import BYETECH_URL
+    from app.scrapers.byetech_crm import BYETECH_URL, API_URL
 
     result = {}
     try:
         async with _httpx.AsyncClient(
-            base_url=BYETECH_URL,
-            follow_redirects=False,   # NÃO segue redirect — vê status real
+            base_url=API_URL,          # ← api-production.byetech.pro
+            follow_redirects=False,    # NÃO segue redirect — vê status real
             timeout=20,
+            headers={
+                "Origin":  BYETECH_URL,
+                "Referer": BYETECH_URL + "/",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0",
+            },
         ) as client:
             # CSRF
-            csrf_r = await client.get("/sanctum/csrf-cookie")
-            result["csrf_status"] = csrf_r.status_code
+            csrf_r = await client.get("/sanctum/csrf-cookie",
+                                      headers={"Accept": "application/json, text/plain, */*"})
+            result["csrf_url"]     = str(csrf_r.url)
+            result["csrf_status"]  = csrf_r.status_code
             result["csrf_cookies"] = list(client.cookies.keys())
 
             xsrf_raw = client.cookies.get("XSRF-TOKEN", "")
             xsrf     = _up.unquote(xsrf_raw)
-            result["xsrf_found"] = bool(xsrf_raw)
+            result["xsrf_found"]   = bool(xsrf_raw)
+            result["xsrf_preview"] = xsrf[:30] if xsrf else ""
 
             hdrs = {
                 "X-XSRF-TOKEN": xsrf,
                 "Content-Type": "application/json",
                 "Accept":       "application/json",
-                "Referer":      BYETECH_URL + "/",
-                "User-Agent":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0",
             }
 
-            # Login POST
+            # Login POST — JSON (igual ao Axios da SPA)
             r = await client.post("/login", json={
-                "email": body.email,
+                "email":    body.email,
                 "password": body.senha,
+                "remember": False,
             }, headers=hdrs)
 
             result["login_status"]   = r.status_code
