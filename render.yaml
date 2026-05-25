@@ -8,3 +8,27 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.0"
+      # URLs públicas (sem segredos)
+      - key: BYETECH_URL
+        value: https://crm.byetech.pro
+      - key: PORTALDEALER_URL
+        value: https://portaldealer.lmmobilidade.com.br
+      - key: LOCALIZA_URL
+        value: https://localiza.my.site.com/meoorevendas/s/
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:///./byetech.db
+      - key: RENDER_SERVICE_URL
+        value: https://byetech-entregas.onrender.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      # ⚠️  Variáveis com segredos devem ser adicionadas pelo painel do Render
+      # (Environment > Add Environment Variable):
+      #   BYETECH_EMAIL, BYETECH_PASSWORD
+      #   PORTALDEALER_LOGIN_GWM, PORTALDEALER_PASS_GWM
+      #   PORTALDEALER_LOGIN_LM, PORTALDEALER_PASS_LM
+      #   LOCALIZA_EMAIL, LOCALIZA_PASSWORD
+      #   SMTP_USER, SMTP_PASS
+      #   SLACK_BOT_TOKEN, SLACK_CHANNEL_NAME
+      #   SECRET_KEY, SESSION_PUSH_SECRET
