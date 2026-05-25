@@ -627,10 +627,16 @@ async def run_gwm_lm_validation(days_back: int = 4, max_por_fonte: int = None) -
     max_por_fonte: limita o scraping por fonte (padrão 80) — prioriza contratos mais urgentes.
     Retorna dict com entregues, mudancas_status, novas_vendas_por_dia, erros.
     """
-    from app.scrapers.portaldealer import scrape_portaldealer
     from app.scrapers.metabase import fetch_contracts_by_date
     from datetime import date, timedelta
     from sqlalchemy import and_
+
+    scrape_portaldealer = None
+    try:
+        from app.scrapers.portaldealer import scrape_portaldealer as _spd2
+        scrape_portaldealer = _spd2
+    except Exception as _imp2:
+        logger.warning(f"[gwm_lm_validation] portaldealer indisponível: {_imp2}")
 
     resultado: dict = {
         "entregues": [],
@@ -694,6 +700,10 @@ async def run_gwm_lm_validation(days_back: int = 4, max_por_fonte: int = None) -
     # ── 2. Scrape portal para cada fonte ──────────────────
     for fonte, clientes in [("GWM", clientes_gwm), ("LM", clientes_lm)]:
         if not clientes:
+            continue
+        if not scrape_portaldealer:
+            resultado["erros"].append(f"{fonte}: Playwright indisponível — portal ignorado")
+            logger.warning(f"🔍 Validação {fonte} — ignorado (Playwright não disponível)")
             continue
         try:
             logger.info(f"🔍 Scraping {fonte} — {len(clientes)} clientes...")
