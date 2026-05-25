@@ -317,10 +317,6 @@ async def run_full_sync(twofa_event_fn=None) -> dict:
     twofa_event_fn: se fornecido, é chamado quando 2FA é necessário (retorna código).
     A sessão do Byetech é cacheada em disco — 2FA só solicitado quando a sessão expirar.
     """
-    from app.scrapers.byetech_crm import scrape_contratos as scrape_byetech
-    from app.scrapers.portaldealer import scrape_portaldealer
-    from app.scrapers.localiza import scrape_localiza
-
     import traceback as _tb
     def _dbg(msg):
         try:
@@ -329,6 +325,10 @@ async def run_full_sync(twofa_event_fn=None) -> dict:
         except Exception:
             pass
 
+    # ── Marca como running ANTES de qualquer import ──────────────────────────
+    # Importante: imports de portal (portaldealer, localiza) podem falhar se
+    # Playwright não estiver instalado no ambiente. Ao setar status aqui,
+    # garantimos que a UI mostra "em andamento" mesmo que os portais falhem.
     set_sync_state(
         status="running",
         message="Iniciando...",
@@ -336,6 +336,24 @@ async def run_full_sync(twofa_event_fn=None) -> dict:
         iniciado_em=datetime.utcnow().isoformat(),
     )
     _dbg("run_full_sync iniciado")
+
+    # Imports lazy dos scrapers — protegidos por try/except para não derrubar
+    # o sync inteiro se Playwright não estiver disponível no ambiente.
+    from app.scrapers.byetech_crm import scrape_contratos as scrape_byetech
+
+    scrape_portaldealer = None
+    scrape_localiza = None
+    try:
+        from app.scrapers.portaldealer import scrape_portaldealer as _spd
+        scrape_portaldealer = _spd
+    except Exception as _imp_err:
+        logger.warning(f"[sync] portaldealer indisponível (Playwright?): {_imp_err}")
+
+    try:
+        from app.scrapers.localiza import scrape_localiza as _slz
+        scrape_localiza = _slz
+    except Exception as _imp_err:
+        logger.warning(f"[sync] localiza indisponível (Playwright?): {_imp_err}")
 
     total_atualizados = 0
     erros = []
@@ -448,61 +466,73 @@ async def run_full_sync(twofa_event_fn=None) -> dict:
 
         # 2. GWM / Sign / Drive
         if clientes_gwm:
-            set_sync_state(message=f"Consultando portal GWM/Sign/Drive ({len(clientes_gwm)} clientes)...")
-            logger.info(f"🔍 Portal GWM — {len(clientes_gwm)} clientes")
-            try:
-                gwm_resultados = await scrape_portaldealer(clientes_gwm, "GWM")
-                async with SessionLocal() as session:
-                    for r in gwm_resultados:
-                        if not r.get("erro"):
-                            await _aplicar_entrega_portal(r)
-                            changed = await _upsert_contrato(session, r, portal_update=True)
-                            if changed:
-                                total_atualizados += 1
-                                if not r.get("entregue"):
-                                    await _sync_byetech_fase(r, erros)
-                    await session.commit()
-            except Exception as e:
-                erros.append(f"GWM: {e}")
-                logger.error(f"Erro GWM: {e}")
+            if not scrape_portaldealer:
+                erros.append("GWM: Playwright indisponível no ambiente — sync de portal ignorado")
+                logger.warning("🔍 Portal GWM — ignorado (Playwright não disponível)")
+            else:
+                set_sync_state(message=f"Consultando portal GWM/Sign/Drive ({len(clientes_gwm)} clientes)...")
+                logger.info(f"🔍 Portal GWM — {len(clientes_gwm)} clientes")
+                try:
+                    gwm_resultados = await scrape_portaldealer(clientes_gwm, "GWM")
+                    async with SessionLocal() as session:
+                        for r in gwm_resultados:
+                            if not r.get("erro"):
+                                await _aplicar_entrega_portal(r)
+                                changed = await _upsert_contrato(session, r, portal_update=True)
+                                if changed:
+                                    total_atualizados += 1
+                                    if not r.get("entregue"):
+                                        await _sync_byetech_fase(r, erros)
+                        await session.commit()
+                except Exception as e:
+                    erros.append(f"GWM: {e}")
+                    logger.error(f"Erro GWM: {e}")
 
         # 3. LM
         if clientes_lm:
-            set_sync_state(message=f"Consultando portal LM ({len(clientes_lm)} clientes)...")
-            logger.info(f"🔍 Portal LM — {len(clientes_lm)} clientes")
-            try:
-                lm_resultados = await scrape_portaldealer(clientes_lm, "LM")
-                async with SessionLocal() as session:
-                    for r in lm_resultados:
-                        if not r.get("erro"):
-                            await _aplicar_entrega_portal(r)
-                            changed = await _upsert_contrato(session, r, portal_update=True)
-                            if changed:
-                                total_atualizados += 1
-                                if not r.get("entregue"):
-                                    await _sync_byetech_fase(r, erros)
-                    await session.commit()
-            except Exception as e:
-                erros.append(f"LM: {e}")
-                logger.error(f"Erro LM: {e}")
+            if not scrape_portaldealer:
+                erros.append("LM: Playwright indisponível no ambiente — sync de portal ignorado")
+                logger.warning("🔍 Portal LM — ignorado (Playwright não disponível)")
+            else:
+                set_sync_state(message=f"Consultando portal LM ({len(clientes_lm)} clientes)...")
+                logger.info(f"🔍 Portal LM — {len(clientes_lm)} clientes")
+                try:
+                    lm_resultados = await scrape_portaldealer(clientes_lm, "LM")
+                    async with SessionLocal() as session:
+                        for r in lm_resultados:
+                            if not r.get("erro"):
+                                await _aplicar_entrega_portal(r)
+                                changed = await _upsert_contrato(session, r, portal_update=True)
+                                if changed:
+                                    total_atualizados += 1
+                                    if not r.get("entregue"):
+                                        await _sync_byetech_fase(r, erros)
+                        await session.commit()
+                except Exception as e:
+                    erros.append(f"LM: {e}")
+                    logger.error(f"Erro LM: {e}")
 
         # 4. Localiza
         if clientes_localiza:
-            set_sync_state(message=f"Consultando portal Localiza ({len(clientes_localiza)} clientes)...")
-            logger.info(f"🔍 Localiza — {len(clientes_localiza)} clientes")
-            try:
-                loc_resultados = await scrape_localiza(clientes_localiza)
-                async with SessionLocal() as session:
-                    for r in loc_resultados:
-                        if not r.get("erro"):
-                            await _aplicar_entrega_portal(r)
-                            changed = await _upsert_contrato(session, r, portal_update=True)
-                            if changed:
-                                total_atualizados += 1
-                    await session.commit()
-            except Exception as e:
-                erros.append(f"Localiza: {e}")
-                logger.error(f"Erro Localiza: {e}")
+            if not scrape_localiza:
+                erros.append("Localiza: Playwright indisponível no ambiente — sync de portal ignorado")
+                logger.warning("🔍 Localiza — ignorado (Playwright não disponível)")
+            else:
+                set_sync_state(message=f"Consultando portal Localiza ({len(clientes_localiza)} clientes)...")
+                logger.info(f"🔍 Localiza — {len(clientes_localiza)} clientes")
+                try:
+                    loc_resultados = await scrape_localiza(clientes_localiza)
+                    async with SessionLocal() as session:
+                        for r in loc_resultados:
+                            if not r.get("erro"):
+                                await _aplicar_entrega_portal(r)
+                                changed = await _upsert_contrato(session, r, portal_update=True)
+                                if changed:
+                                    total_atualizados += 1
+                        await session.commit()
+                except Exception as e:
+                    erros.append(f"Localiza: {e}")
+                    logger.error(f"Erro Localiza: {e}")
 
         # 5. Unidas — apenas registra no banco (scraping via email)
         if clientes_unidas:
