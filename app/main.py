@@ -274,9 +274,9 @@ async def get_contrato(contrato_id: str, db: AsyncSession = Depends(get_db)):
     )
     historico = hist_result.scalars().all()
 
-    # pedido_id_locadora: usa o valor salvo no banco (vem do Metabase diretamente)
-    # Fallback: busca no mapa CPF Byetech se o banco não tiver
-    byetech_pedido_id = c.pedido_id_locadora
+    # pedido_portal_id: ID real da locadora (ex: SDI12345, GWM67890) — preferido
+    # pedido_id_locadora: ID interno do Byetech (pedido) — fallback do Metabase
+    byetech_pedido_id = c.pedido_portal_id or c.pedido_id_locadora
     if not byetech_pedido_id:
         import json as _json2, re as _re2
         cpf_map_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".byetech_cpf_map.json")
@@ -1855,6 +1855,7 @@ def _contrato_to_dict(c: Contrato) -> dict:
         "nova_previsao_entrega": iso(c.nova_previsao_entrega),
         "data_venda": iso(c.data_venda),
         "pedido_id_locadora": c.pedido_id_locadora,
+        "pedido_portal_id": c.pedido_portal_id,
         "ultima_atualizacao": iso(c.ultima_atualizacao),
         "etapas": [],  # preenchido via detalhe
     }

@@ -591,10 +591,13 @@ async function showDetail(id) {
         <div class="detail-section-title">Dados do Contrato</div>
         <div class="detail-grid">
           <div class="detail-item"><label>Locadora</label><span>${c.fonte || '–'}</span></div>
-          <div class="detail-item"><label>ID externo</label><span>${c.id_externo || '–'}</span></div>
-          <div class="detail-item"><label>ID na locadora (Byetech)</label>
-            <span style="color:${c.byetech_pedido_id ? 'var(--primary)' : 'var(--muted)'}">
-              ${c.byetech_pedido_id || '–'}
+          <div class="detail-item"><label>ID contrato (Byetech)</label><span>${c.id_externo || '–'}</span></div>
+          <div class="detail-item"><label>ID pedido na locadora</label>
+            <span style="color:${(c.pedido_portal_id || c.byetech_pedido_id) ? 'var(--primary)' : 'var(--muted)'}">
+              ${c.pedido_portal_id
+                ? c.pedido_portal_id + (c.pedido_id_locadora && c.pedido_id_locadora != c.pedido_portal_id
+                    ? `<span style="font-size:.72rem;color:var(--muted);margin-left:4px">(Byetech: ${c.pedido_id_locadora})</span>` : '')
+                : (c.byetech_pedido_id || '–')}
             </span>
           </div>
           <div class="detail-item"><label>CPF/CNPJ</label><span>${formatDoc(c.cliente_cpf_cnpj)}</span></div>

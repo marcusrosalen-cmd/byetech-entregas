@@ -38,7 +38,8 @@ class Contrato(Base):
     observacoes = Column(Text)
     nova_previsao_entrega = Column(DateTime)       # Nova previsão após atraso (atrasado permanece True)
     data_venda = Column(DateTime)                  # Data de venda (do Metabase)
-    pedido_id_locadora = Column(Integer)           # ID do pedido na locadora (do Metabase)
+    pedido_id_locadora = Column(Integer)           # ID do pedido interno Byetech (do Metabase)
+    pedido_portal_id   = Column(String)            # ID do pedido no portal da locadora (ex: GWM12345, SDI678)
     ultima_atualizacao = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     criado_em = Column(DateTime, default=datetime.utcnow)
 
@@ -101,6 +102,7 @@ async def init_db():
             "ALTER TABLE contratos ADD COLUMN data_venda DATETIME",
             "ALTER TABLE contratos ADD COLUMN pedido_id_locadora INTEGER",
             "ALTER TABLE contratos ADD COLUMN nova_previsao_entrega DATETIME",
+            "ALTER TABLE contratos ADD COLUMN pedido_portal_id VARCHAR",
         ]:
             try:
                 await conn.execute(text(stmt))

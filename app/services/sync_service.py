@@ -97,6 +97,10 @@ async def _upsert_contrato(session: AsyncSession, data: dict, portal_update: boo
         if data.get("pedido_id_locadora"):
             existing.pedido_id_locadora = data["pedido_id_locadora"]
 
+        # ID do pedido no portal da locadora (ex: SDI12345, GWM67890)
+        if data.get("pedido_id_portal"):
+            existing.pedido_portal_id = str(data["pedido_id_portal"])
+
         if not portal_update:
             # Só Byetech CRM pode atualizar dados do cliente
             existing.cliente_nome = data.get("cliente_nome") or existing.cliente_nome
@@ -139,6 +143,7 @@ async def _upsert_contrato(session: AsyncSession, data: dict, portal_update: boo
             data_entrega_definitiva=data.get("data_entrega_definitiva"),
             data_venda=data.get("data_venda"),
             pedido_id_locadora=data.get("pedido_id_locadora"),
+            pedido_portal_id=str(data["pedido_id_portal"]) if data.get("pedido_id_portal") else None,
             dias_para_entrega=dias,
             atrasado=atrasado,
         )
@@ -867,6 +872,8 @@ async def run_signanddrive_sync(
 
             # Usa o ID/id_externo/fonte original para que _upsert_contrato atualize o registro certo
             if c_orig:
+                # Salva o orderId do Sign & Drive como pedido_portal_id ANTES de sobrescrever id_externo
+                r["pedido_id_portal"] = r.get("id_externo")  # str(orderId) da API S&D
                 r["id_externo"] = c_orig.id_externo
                 r["byetech_contrato_id"] = c_orig.byetech_contrato_id
                 r["fonte"] = c_orig.fonte  # GWM/VW/SIGN & DRIVE — deve bater com o banco
