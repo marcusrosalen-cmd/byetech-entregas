@@ -1296,13 +1296,19 @@ function showToast(msg, type = 'info') {
 // ── Format helpers ────────────────────────────────────────
 function formatDate(iso) {
   if (!iso) return '–';
-  const d = new Date(iso);
+  // Strings apenas com data (YYYY-MM-DD) são interpretadas como UTC pelo JS
+  // → força interpretação local para não deslocar um dia
+  const s = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso + 'T00:00:00' : iso;
+  const d = new Date(s);
   if (isNaN(d)) return iso;
   return d.toLocaleDateString('pt-BR');
 }
 function formatDateTime(iso) {
   if (!iso) return '–';
-  const d = new Date(iso);
+  // O servidor salva em UTC sem sufixo de fuso — adiciona Z para o browser
+  // converter corretamente para o horário local (ex: UTC-3 = São Paulo)
+  const s = (iso.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(iso)) ? iso : iso + 'Z';
+  const d = new Date(s);
   if (isNaN(d)) return iso;
   return d.toLocaleString('pt-BR');
 }
