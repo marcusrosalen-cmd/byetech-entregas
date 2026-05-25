@@ -249,17 +249,24 @@ async function checkByetechPending() {
 
     if (_byetechPending > 0 || !_byetechSessionOk) {
       el.style.display = 'flex';
-      const sessaoMsg = !_byetechSessionOk
-        ? '🔑 <strong>Sessão Byetech expirada.</strong> Faça login para renovar.'
-        : '';
-      const pendMsg = _byetechPending > 0
-        ? `⚠️ <strong>${_byetechPending} entrega(s) pendente(s)</strong> aguardando sessão Byetech válida.`
-        : '';
-      el.innerHTML = `
-        <span style="font-size:.88rem">${[sessaoMsg, pendMsg].filter(Boolean).join(' &nbsp;')}</span>
-        <button class="btn btn-sm btn-outline" onclick="openByetechLoginModal()" style="margin-left:auto;white-space:nowrap;border-color:var(--warning);color:var(--warning)">
-          🔑 Login Byetech
-        </button>`;
+
+      if (!_byetechSessionOk) {
+        // Sessão expirada — mostra botão de login
+        el.innerHTML = `
+          <span style="font-size:.88rem">🔑 <strong>Sessão Byetech expirada.</strong> Faça login para renovar.
+            ${_byetechPending > 0 ? ` &nbsp;⚠️ <strong>${_byetechPending} entrega(s)</strong> aguardando.` : ''}
+          </span>
+          <button class="btn btn-sm btn-outline" onclick="openByetechLoginModal()" style="margin-left:auto;white-space:nowrap;border-color:var(--warning);color:var(--warning)">
+            🔑 Login Byetech
+          </button>`;
+      } else {
+        // Sessão OK mas ainda há pendentes sendo processados
+        el.innerHTML = `
+          <span style="font-size:.88rem">⏳ <strong>${_byetechPending} entrega(s) pendente(s)</strong> sendo sincronizadas com o Byetech…</span>
+          <button class="btn btn-sm btn-outline" onclick="checkByetechPending()" style="margin-left:auto;white-space:nowrap;border-color:var(--warning);color:var(--warning)">
+            🔄 Atualizar
+          </button>`;
+      }
     } else {
       el.style.display = 'none';
     }

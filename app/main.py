@@ -950,7 +950,17 @@ async def byetech_login_manual(body: ByetechLoginBody):
         )
         if cookies:
             set_remote_session(cookies)
-            return {"ok": True, "msg": "Sessão Byetech ativa!"}
+            pending = await _get_pending_count()
+            # Processa entregas pendentes e reconstrói mapa CPF em background
+            async def _pos_login():
+                logger.info("[Byetech] Pós-login: reconstruindo mapa CPF e processando pendentes...")
+                await _rebuild_cpf_map()
+                await _flush_byetech_pending()
+            asyncio.create_task(_pos_login())
+            msg = "✅ Sessão Byetech ativa!"
+            if pending:
+                msg += f" Processando {pending} entrega(s) pendente(s)..."
+            return {"ok": True, "msg": msg, "pendentes": pending}
         return {"ok": False, "dois_fatores": False, "msg": "Login falhou — verifique as credenciais"}
     except Exception as e:
         err = str(e)
