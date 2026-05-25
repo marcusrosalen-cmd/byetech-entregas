@@ -830,48 +830,59 @@ async def update_delivery_by_cpf(
         entry = await _lookup_contrato_por_cpf(cpf_norm, digits, twofa_callback)
 
     if not entry:
-        logger.error(f"[Byetech] CPF {cpf_norm!r} não encontrado no mapa CPF nem na API")
-        return False
+        raise Exception(
+            f"CPF_NAO_ENCONTRADO: CPF {cpf_norm[:6]}... não localizado no Byetech. "
+            f"Verifique se o contrato existe no CRM e se o CPF está correto."
+        )
 
     contract_id = entry.get("id")
     if not contract_id:
-        logger.error(f"[Byetech] ID inteiro ausente no mapa para CPF {cpf_norm!r}")
-        return False
+        raise Exception(
+            f"ID_AUSENTE: Contrato encontrado para CPF {cpf_norm[:6]}... mas sem ID numérico. "
+            f"Reconstrua o mapa CPF via login."
+        )
 
     # Sessão válida
     cookies = await get_session(twofa_callback)
     headers = _make_headers(cookies)
 
-    # Payload completo (evita erros de campos null no Laravel)
+    # Payload PATCH — envia apenas campos com valor (null em campos opcionais
+    # causa HTTP 422 no Laravel quando o campo tem validação "required_without")
     data_str = data_entrega.strftime("%Y-%m-%d")
     effective_placa = placa or entry.get("placa_carro")
-    payload = {
+
+    _payload_raw = {
+        "entregaDefinitivo":       data_str,                                        # sempre
         "kmExcedenteValue":        entry.get("km_excedente_value") or "0.00",
-        "entregaDefinitivo":       data_str,
+        "franquiaCoparticipacao":  entry.get("franquia_coparticipacao") or "0",
+        "coberturaDanosMateriais": entry.get("cobertura_danos_materiais") or "--",
+        "coberturaDanosCorporais": entry.get("cobertura_danos_corporais") or "--",
+        "isReversal":              entry.get("is_reversal") if entry.get("is_reversal") is not None else 0,
+        "isActive":                entry.get("is_active")  if entry.get("is_active")  is not None else 1,
+        "isExtended":              entry.get("is_extended") if entry.get("is_extended") is not None else 0,
+        "automaticSendLink":       entry.get("automatic_send_link") if entry.get("automatic_send_link") is not None else 1,
+        # Campos opcionais — só envia se tiver valor
         "retiradaProvisorio":      entry.get("retirada_provisorio"),
         "placaCarro":              effective_placa,
         "frequencyOfUse":          entry.get("frequency_of_use"),
         "usageType":               entry.get("usage_type"),
-        "isReversal":              entry.get("is_reversal", 0),
         "reversalValue":           entry.get("reversal_value"),
-        "franquiaCoparticipacao":  entry.get("franquia_coparticipacao") or "0",
-        "coberturaDanosMateriais": entry.get("cobertura_danos_materiais") or "--",
-        "coberturaDanosCorporais": entry.get("cobertura_danos_corporais") or "--",
-        "isActive":                entry.get("is_active", 1),
-        "isExtended":              entry.get("is_extended", 0),
         "extensionMonths":         entry.get("extension_months"),
-        "automaticSendLink":       entry.get("automatic_send_link", 1),
     }
+    # Remove campos None — PATCH semântico (só atualiza o que foi enviado)
+    payload = {k: v for k, v in _payload_raw.items() if v is not None}
 
     async with httpx.AsyncClient(follow_redirects=True) as client:
-        # PATCH com todos os campos
+        # PATCH — atualiza data de entrega definitiva
         resp = await client.patch(
             f"{API_URL}/api/contracts/{contract_id}",
             json=payload, headers=headers, cookies=cookies, timeout=30,
         )
         if resp.status_code not in (200, 201, 204):
-            logger.error(f"[Byetech] PATCH {contract_id}: {resp.status_code} {resp.text[:300]}")
-            return False
+            err_body = resp.text[:400]
+            logger.error(f"[Byetech] PATCH {contract_id}: HTTP {resp.status_code} — {err_body}")
+            # Lança exceção com detalhes para que o chamador possa mostrar ao usuário
+            raise Exception(f"PATCH_FALHOU: HTTP {resp.status_code} — {err_body}")
 
         # /move para fase Definitivo Entregue
         resp_move = await client.patch(
@@ -884,8 +895,8 @@ async def update_delivery_by_cpf(
             if resp_move.status_code == 500 and "atualizar" in body_txt:
                 logger.info(f"[Byetech] Contrato {contract_id} já estava na fase Definitivo Entregue")
             else:
-                logger.error(f"[Byetech] MOVE {contract_id}: {resp_move.status_code} {body_txt[:200]}")
-                return False
+                logger.error(f"[Byetech] MOVE {contract_id}: HTTP {resp_move.status_code} — {body_txt[:200]}")
+                raise Exception(f"MOVE_FALHOU: HTTP {resp_move.status_code} — {body_txt[:200]}")
 
     logger.info(f"✅ [Byetech] Contrato {contract_id} → Definitivo Entregue em {data_str}"
                 f" (placa={effective_placa!r})")

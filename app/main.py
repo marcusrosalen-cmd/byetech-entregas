@@ -385,60 +385,44 @@ async def marcar_entregue(contrato_id: str, body: EntregarBody, db: AsyncSession
     except Exception as _lv_err:
         logger.debug(f"[Lovable] marcar_entregue ignorado: {_lv_err}")
 
-    # ── Byetech: tenta atualizar com Playwright se disponível, senão enfileira ──
+    # ── Byetech: atualiza via API httpx (sessão gerenciada por get_session()) ──
     byetech_status = "sem_cpf"
     byetech_msg    = "Contrato sem CPF — não foi possível atualizar o Byetech"
     placa = c.placa if c.placa and str(c.placa).lower() not in ("nan", "n/a", "") else None
 
     if c.cliente_cpf_cnpj:
-        _playwright_ok = False
         try:
-            from app.scrapers.byetech_crm import (
-                update_delivery_by_cpf, _load_session_from_disk, _test_session
-            )
-            _playwright_ok = True
+            from app.scrapers.byetech_crm import update_delivery_by_cpf
         except ImportError:
-            pass
-
-        if not _playwright_ok:
-            # Render: Playwright não disponível — enfileira no banco para processamento local
             byetech_status = "enfileirado"
-            byetech_msg    = "Playwright indisponível neste servidor — entrega salva na fila. Rode processar_pendentes.py localmente."
+            byetech_msg    = "Módulo Byetech indisponível — entrega enfileirada"
             await _queue_byetech_update(contrato_id, data, c.cliente_cpf_cnpj, placa, c.cliente_nome or "")
         else:
-            cookies = _load_session_from_disk()
-            if not cookies or not await _test_session(cookies):
-                byetech_status = "sessao_expirada"
-                byetech_msg    = "Sessão Byetech expirada — entrega enfileirada para retry"
+            try:
+                ok = await asyncio.wait_for(
+                    update_delivery_by_cpf(
+                        cpf_raw=c.cliente_cpf_cnpj, data_entrega=data, placa=placa
+                    ),
+                    timeout=45.0,
+                )
+                byetech_status = "ok" if ok else "erro"
+                byetech_msg    = "Byetech atualizado com sucesso" if ok else "update_delivery_by_cpf retornou False"
+                if not ok:
+                    await _queue_byetech_update(contrato_id, data, c.cliente_cpf_cnpj, placa, c.cliente_nome or "")
+            except asyncio.TimeoutError:
+                byetech_status = "timeout"
+                byetech_msg    = "Byetech demorou >45s — atualização enfileirada para retry"
                 await _queue_byetech_update(contrato_id, data, c.cliente_cpf_cnpj, placa, c.cliente_nome or "")
-            else:
-                try:
-                    ok = await asyncio.wait_for(
-                        update_delivery_by_cpf(
-                            cpf_raw=c.cliente_cpf_cnpj, data_entrega=data, placa=placa
-                        ),
-                        timeout=20.0,
-                    )
-                    if ok:
-                        byetech_status = "ok"
-                        byetech_msg    = "Byetech atualizado com sucesso"
-                    else:
-                        byetech_status = "erro"
-                        byetech_msg    = "PATCH retornou falha — verifique manualmente no Byetech"
-                        await _queue_byetech_update(contrato_id, data, c.cliente_cpf_cnpj, placa, c.cliente_nome or "")
-                except asyncio.TimeoutError:
-                    byetech_status = "timeout"
-                    byetech_msg    = "Byetech demorou (timeout) — atualização enfileirada"
-                    await _queue_byetech_update(contrato_id, data, c.cliente_cpf_cnpj, placa, c.cliente_nome or "")
-                except Exception as e:
-                    err = str(e)
-                    if "expirada" in err.lower() or "2FA" in err or "401" in err:
-                        byetech_status = "sessao_expirada"
-                        byetech_msg    = "Sessão expirada — entrega enfileirada para retry"
-                    else:
-                        byetech_status = "erro"
-                        byetech_msg    = err[:120]
-                    await _queue_byetech_update(contrato_id, data, c.cliente_cpf_cnpj, placa, c.cliente_nome or "")
+            except Exception as e:
+                err = str(e)
+                if "expirada" in err.lower() or "2FA" in err or "401" in err:
+                    byetech_status = "sessao_expirada"
+                    byetech_msg    = "Sessão Byetech expirada — entrega enfileirada. Clique em 🔑 Renovar sessão."
+                else:
+                    byetech_status = "erro"
+                    # Mostra o erro real da API para facilitar diagnóstico
+                    byetech_msg = err[:250]
+                await _queue_byetech_update(contrato_id, data, c.cliente_cpf_cnpj, placa, c.cliente_nome or "")
 
     return {
         "ok":             True,
@@ -577,36 +561,33 @@ async def _flush_byetech_pending():
 
     logger.info(f"[Byetech] Processando {len(items)} pendente(s)...")
     for item in items:
+        erro_msg = None
+        ok = False
         try:
             ok = await update_delivery_by_cpf(
                 cpf_raw=item.cliente_cpf,
                 data_entrega=item.data_entrega,
                 placa=item.placa,
             )
-            async with SessionLocal() as s:
-                res2 = await s.execute(select(ByetechPendente).where(ByetechPendente.id == item.id))
-                p = res2.scalar_one_or_none()
-                if p:
-                    if ok:
-                        p.processado_em = datetime.utcnow()
-                        p.erro_ultimo = None
-                    else:
-                        p.tentativas = (p.tentativas or 0) + 1
-                        p.erro_ultimo = "update retornou False"
-                    await s.commit()
-            if ok:
-                logger.info(f"[Byetech] Pendente OK: {item.contrato_id}")
-            else:
-                logger.error(f"[Byetech] Pendente falhou: {item.contrato_id}")
+            if not ok:
+                erro_msg = "update_delivery_by_cpf retornou False"
         except Exception as e:
-            logger.error(f"[Byetech] Erro pendente {item.contrato_id}: {e}")
-            async with SessionLocal() as s:
-                res2 = await s.execute(select(ByetechPendente).where(ByetechPendente.id == item.id))
-                p = res2.scalar_one_or_none()
-                if p:
+            erro_msg = str(e)[:300]
+            logger.error(f"[Byetech] Erro pendente {item.contrato_id}: {erro_msg}")
+
+        async with SessionLocal() as s:
+            res2 = await s.execute(select(ByetechPendente).where(ByetechPendente.id == item.id))
+            p = res2.scalar_one_or_none()
+            if p:
+                if ok:
+                    p.processado_em = datetime.utcnow()
+                    p.erro_ultimo = None
+                    logger.info(f"[Byetech] Pendente OK: {item.contrato_id} ({item.cliente_nome})")
+                else:
                     p.tentativas = (p.tentativas or 0) + 1
-                    p.erro_ultimo = str(e)[:200]
-                    await s.commit()
+                    p.erro_ultimo = erro_msg
+                    logger.error(f"[Byetech] Pendente falhou ({p.tentativas}x): {item.contrato_id} — {erro_msg}")
+                await s.commit()
 
 
 async def _update_byetech_crm(db_contrato_id: str, data: datetime):
@@ -626,12 +607,7 @@ async def _update_byetech_crm(db_contrato_id: str, data: datetime):
 
     placa = c.placa if c.placa and str(c.placa).lower() not in ("nan", "n/a", "") else None
 
-    try:
-        from app.scrapers.byetech_crm import update_delivery_by_cpf
-    except ImportError:
-        logger.warning(f"[Byetech] Playwright indisponível — {db_contrato_id} enfileirado para retry local")
-        await _queue_byetech_update(db_contrato_id, data, c.cliente_cpf_cnpj, placa, c.cliente_nome or "")
-        return
+    from app.scrapers.byetech_crm import update_delivery_by_cpf
 
     try:
         ok = await update_delivery_by_cpf(cpf_raw=c.cliente_cpf_cnpj, data_entrega=data, placa=placa)
@@ -640,7 +616,7 @@ async def _update_byetech_crm(db_contrato_id: str, data: datetime):
         if "2FA_REQUIRED" in err or "expirada" in err.lower() or "401" in err:
             logger.warning(f"[Byetech] Sessão expirada — {db_contrato_id} enfileirado para retry")
         else:
-            logger.error(f"[Byetech] Erro ao atualizar {db_contrato_id}: {e}")
+            logger.error(f"[Byetech] Erro ao atualizar {db_contrato_id}: {err[:200]}")
         await _queue_byetech_update(db_contrato_id, data, c.cliente_cpf_cnpj, placa, c.cliente_nome or "")
         return
 
@@ -1599,9 +1575,9 @@ async def health_check():
             from app.scrapers.portaldealer import ACCOUNTS, PORTAL_URL
         except Exception as e:
             if "playwright" in str(e).lower() or "No module named" in str(e):
-                # Playwright não está instalado no Render — comportamento normal
-                return {"ok": True, "warning": True,
-                        "detail": "Playwright não disponível no Render — sync via script local (_agendar_portais.bat)"}
+                # Playwright não pôde ser importado (ex: build sem --with-deps)
+                return {"ok": False, "warning": True,
+                        "detail": f"Playwright não disponível — verifique o build do Render (playwright install --with-deps chromium): {e}"}
             return {"ok": False, "detail": str(e)}
         try:
             acc = ACCOUNTS.get(fonte, {})

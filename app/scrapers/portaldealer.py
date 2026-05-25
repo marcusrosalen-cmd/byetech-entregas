@@ -518,7 +518,10 @@ async def scrape_portaldealer(clientes: list[dict], account_key: str = "GWM") ->
                 cpf_index[cpf[:-1]] = cli
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-setuid-sandbox"],
+        )
         context = await browser.new_context()
         page = await context.new_page()
 
@@ -616,7 +619,10 @@ async def scrape_portaldealer_gwm(clientes: list[dict]) -> list[dict]:
     resultados = []
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-setuid-sandbox"],
+        )
         context = await browser.new_context()
         page = await context.new_page()
 
