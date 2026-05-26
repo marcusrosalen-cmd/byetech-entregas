@@ -14,12 +14,13 @@ logger = logging.getLogger("signanddrive")
 
 API_BASE  = "https://backend.vwsignanddrive.com.br/api"
 API_LOGIN = f"{API_BASE}/signin/dealership"
+# {st} = filtro de status (&status= vazio = ativos; &status=11 = concluidos; etc.)
 API_MGMT  = (
     f"{API_BASE}/dealership-management"
     f"?dealershipId=395&dealershipGroupId=401"
     f"&role=Admin+da+Concession%C3%A1ria"
     f"&userDnId=0&Page=true&QuantityPerPage=100"
-    f"&dateStart={{ds}}&dateEnd={{de}}&status=&CurrentPage={{pg}}"
+    f"&dateStart={{ds}}&dateEnd={{de}}&status={{st}}&CurrentPage={{pg}}"
 )
 API_ITEMS = f"{API_BASE}/orderitems?orderId={{}}&noCache=true"
 
@@ -90,8 +91,8 @@ def _sd_login() -> str:
 
 # ── CPF Index ─────────────────────────────────────────────────────────────────
 
-def _fetch_page(token: str, ds: str, de: str, page: int):
-    url = API_MGMT.format(ds=ds, de=de, pg=page)
+def _fetch_page(token: str, ds: str, de: str, page: int, status: str = ""):
+    url = API_MGMT.format(ds=ds, de=de, pg=page, st=status)
     req = urllib.request.Request(url, headers={
         "Authorization": f"Bearer {token}", "User-Agent": "Mozilla/5.0",
     })
@@ -105,27 +106,40 @@ def _fetch_page(token: str, ds: str, de: str, page: int):
 
 
 def _build_cpf_index(token: str) -> dict:
-    """Retorna {cpf_norm: orderId} para todos os pedidos PF da concessionaria."""
+    """
+    Retorna {cpf_norm: orderId} para todos os pedidos PF da concessionaria.
+
+    Consulta a management API com diferentes filtros de status:
+    - status="" (vazio)  → pedidos ativos/em andamento
+    - status="11"        → Pedido concluido (assinado, nao necessariamente entregue)
+    - status="5"         → Veiculo Entregue (escala antiga; pode retornar entregues)
+
+    A combinacao de filtros maximiza a cobertura, capturando pedidos que
+    desaparecem da view "ativa" apos a entrega.
+    """
     idx = {}
+    # Filtros de status a tentar: vazio (ativos) + concluidos + entregues
+    status_filters = ["", "11", "5"]
     for ds, de in _date_windows():
-        page = 1
-        while True:
-            itens, has_next = _fetch_page(token, ds, de, page)
-            if not itens:
-                break
-            for it in itens:
-                cpf_raw = it.get("cpfCnpj", "")
-                if not cpf_raw or len(_digits(cpf_raw)) > 11:
-                    continue
-                cpf_norm = _normalizar_cpf(cpf_raw)
-                oid = it.get("orderId")
-                if cpf_norm not in idx:
-                    idx[cpf_norm] = oid
-                    for v in _cpf_variants(cpf_raw):
-                        idx.setdefault(v, oid)
-            if not has_next:
-                break
-            page += 1
+        for st in status_filters:
+            page = 1
+            while True:
+                itens, has_next = _fetch_page(token, ds, de, page, st)
+                if not itens:
+                    break
+                for it in itens:
+                    cpf_raw = it.get("cpfCnpj", "")
+                    if not cpf_raw or len(_digits(cpf_raw)) > 11:
+                        continue
+                    cpf_norm = _normalizar_cpf(cpf_raw)
+                    oid = it.get("orderId")
+                    if cpf_norm not in idx:
+                        idx[cpf_norm] = oid
+                        for v in _cpf_variants(cpf_raw):
+                            idx.setdefault(v, oid)
+                if not has_next:
+                    break
+                page += 1
     return idx
 
 
@@ -202,7 +216,14 @@ async def scrape_signanddrive(clientes: list[dict]) -> list[dict]:
     """
     Consulta a API Sign & Drive para cada cliente.
 
-    clientes: [{cliente_cpf_cnpj, cliente_nome, byetech_contrato_id, veiculo, placa, ...}]
+    clientes: [{cliente_cpf_cnpj, cliente_nome, byetech_contrato_id, veiculo, placa,
+                pedido_portal_id (opcional — orderId ja salvo no banco), ...}]
+
+    Estrategia:
+    - Clientes com pedido_portal_id ja salvo no banco -> _fetch_order direto (bypassa
+      management API, que so mostra pedidos ATIVOS — entregues somem dela).
+    - Clientes sem pedido_portal_id -> usa _build_cpf_index (management API) para
+      descobrir o orderId, depois _fetch_order.
 
     Retorna: [{fonte, id_externo, cliente_cpf_cnpj, cliente_nome,
                veiculo, placa, status_atual, data_entrega_definitiva, entregue}]
@@ -211,26 +232,45 @@ async def scrape_signanddrive(clientes: list[dict]) -> list[dict]:
         logger.info(f"Sign & Drive: autenticando ({len(clientes)} clientes)...")
         token = _sd_login()
 
-        logger.info("Sign & Drive: construindo indice CPF->orderId...")
-        idx = _build_cpf_index(token)
-        logger.info(f"Sign & Drive: {len(idx)} entradas no indice")
+        # ── Separa clientes com orderId ja conhecido vs novos ────────────────
+        clientes_com_oid = [c for c in clientes if c.get("pedido_portal_id")]
+        clientes_sem_oid = [c for c in clientes if not c.get("pedido_portal_id")]
+
+        logger.info(
+            f"Sign & Drive: {len(clientes_com_oid)} com orderId salvo, "
+            f"{len(clientes_sem_oid)} precisam de lookup CPF->orderId"
+        )
 
         order_map: dict[int, list] = {}
         sem_pedido: list = []
 
-        for cli in clientes:
-            cpf_raw  = cli.get("cliente_cpf_cnpj", "")
-            cpf_norm = _normalizar_cpf(cpf_raw)
-            oid = idx.get(cpf_norm)
-            if not oid:
-                for v in _cpf_variants(cpf_raw):
-                    oid = idx.get(v)
-                    if oid:
-                        break
-            if oid:
+        # Clientes com orderId salvo -> usa diretamente (funciona mesmo pos-entrega)
+        for cli in clientes_com_oid:
+            try:
+                oid = int(cli["pedido_portal_id"])
                 order_map.setdefault(oid, []).append(cli)
-            else:
-                sem_pedido.append(cli)
+            except (ValueError, TypeError):
+                clientes_sem_oid.append(cli)  # fallback para lookup CPF
+
+        # Clientes sem orderId -> management API (so mostra pedidos ativos)
+        if clientes_sem_oid:
+            logger.info("Sign & Drive: construindo indice CPF->orderId para novos clientes...")
+            idx = _build_cpf_index(token)
+            logger.info(f"Sign & Drive: {len(idx)} entradas no indice")
+
+            for cli in clientes_sem_oid:
+                cpf_raw  = cli.get("cliente_cpf_cnpj", "")
+                cpf_norm = _normalizar_cpf(cpf_raw)
+                oid = idx.get(cpf_norm)
+                if not oid:
+                    for v in _cpf_variants(cpf_raw):
+                        oid = idx.get(v)
+                        if oid:
+                            break
+                if oid:
+                    order_map.setdefault(oid, []).append(cli)
+                else:
+                    sem_pedido.append(cli)
 
         logger.info(
             f"Sign & Drive: {len(order_map)} orderIds unicos, "

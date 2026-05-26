@@ -880,6 +880,9 @@ async def run_signanddrive_sync(
             "data_prevista_entrega": c.data_prevista_entrega,
             "_contrato_id_db":       c.id,          # preserva ID original do banco
             "_id_externo_db":        c.id_externo,  # preserva id_externo original
+            # orderId ja salvo de syncs anteriores → bypassa management API
+            # (management API so mostra pedidos ATIVOS; entregues somem dela)
+            "pedido_portal_id":      c.pedido_portal_id,
         }
         for c in contratos_db
     ]
