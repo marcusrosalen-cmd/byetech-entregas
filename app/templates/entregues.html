@@ -177,6 +177,100 @@
     .data-entrega { color: var(--green); font-weight: 600; font-size: 13px; }
     .dias-apos { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
+    /* ── Tabs ── */
+    .tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 24px;
+      border-bottom: 2px solid var(--border);
+      padding-bottom: 0;
+    }
+    .tab-btn {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 600;
+      padding: 10px 20px;
+      cursor: pointer;
+      transition: color .2s, border-color .2s;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--text); border-bottom-color: var(--accent); }
+    .tab-badge {
+      background: var(--red);
+      color: #fff;
+      border-radius: 99px;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 1px 7px;
+      min-width: 20px;
+      text-align: center;
+    }
+    .tab-badge.zero { background: var(--muted2); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── Pendentes Byetech ── */
+    .pend-table-wrap { overflow-x: auto; }
+    .pend-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .pend-table thead { position: sticky; top: 57px; z-index: 10; }
+    .pend-table th {
+      text-align: left;
+      padding: 10px 12px;
+      color: var(--muted);
+      background: var(--card);
+      border-bottom: 2px solid var(--border);
+      font-weight: 500;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      white-space: nowrap;
+    }
+    .pend-table td { padding: 10px 12px; border-bottom: 1px solid rgba(45,48,72,.5); vertical-align: middle; }
+    .pend-table tr:last-child td { border-bottom: none; }
+    .pend-table tr:hover td { background: rgba(108,99,255,.04); }
+    .pend-erro {
+      font-size: 11px;
+      color: var(--red);
+      max-width: 280px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .btn-feito {
+      background: rgba(34,197,94,.15);
+      border: 1px solid rgba(34,197,94,.4);
+      color: var(--green);
+      border-radius: 8px;
+      padding: 5px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background .2s;
+    }
+    .btn-feito:hover { background: rgba(34,197,94,.3); }
+    .btn-feito:disabled { opacity: .45; cursor: default; }
+    .pend-done-row td { opacity: .45; text-decoration: line-through; }
+    .pend-done-row .btn-feito { display: none; }
+    .pend-info {
+      background: rgba(234,179,8,.08);
+      border: 1px solid rgba(234,179,8,.25);
+      border-radius: 10px;
+      padding: 14px 18px;
+      margin-bottom: 20px;
+      font-size: 13px;
+      color: var(--yellow);
+      line-height: 1.6;
+    }
+    .pend-info strong { color: #fde047; }
+
     /* ── Paginação ── */
     .pagination {
       display: flex;
@@ -230,6 +324,20 @@
 
 <div class="container">
 
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab-btn active" id="tab-entregues" onclick="switchTab('entregues')">
+      Entregues
+    </button>
+    <button class="tab-btn" id="tab-pendentes" onclick="switchTab('pendentes')">
+      Pendentes Byetech
+      <span class="tab-badge zero" id="pend-badge">0</span>
+    </button>
+  </div>
+
+  <!-- ── PAINEL: ENTREGUES ── -->
+  <div class="tab-panel active" id="panel-entregues">
+
   <!-- KPIs -->
   <div class="kpi-grid" id="kpi-grid">
     <div class="kpi-card purple" onclick="setFonte('')">
@@ -282,6 +390,37 @@
 
   <!-- Paginação -->
   <div class="pagination" id="pagination"></div>
+
+  </div><!-- fim panel-entregues -->
+
+  <!-- ── PAINEL: PENDENTES BYETECH ── -->
+  <div class="tab-panel" id="panel-pendentes">
+
+    <div class="pend-info">
+      <strong>⚠ Contorno manual:</strong> estes contratos foram marcados como entregues no sistema,
+      mas a atualização automática no Byetech CRM falhou (sessão expirada ou CPF não localizado).
+      O analista deve abrir o Byetech, atualizar manualmente e clicar em <strong>✓ Feito</strong>.
+    </div>
+
+    <div class="pend-table-wrap">
+      <table class="pend-table">
+        <thead>
+          <tr>
+            <th>Cliente</th>
+            <th>CPF</th>
+            <th>Data Entrega</th>
+            <th>Tentativas</th>
+            <th>Erro</th>
+            <th style="text-align:center">Ação</th>
+          </tr>
+        </thead>
+        <tbody id="pend-body">
+          <tr><td colspan="6" class="empty-msg"><div class="spinner"></div><br>Carregando…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div><!-- fim panel-pendentes -->
 
 </div>
 
@@ -535,8 +674,104 @@ function fmtDoc(doc) {
   return doc;
 }
 
+// ── Tabs ─────────────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.getElementById('panel-' + tab).classList.add('active');
+  if (tab === 'pendentes') loadPendentes();
+}
+
+// ── Pendentes Byetech ─────────────────────────────────────────────────────────
+let _pendentes = [];
+
+async function loadPendentes() {
+  const tbody = document.getElementById('pend-body');
+  tbody.innerHTML = '<tr><td colspan="6" class="empty-msg"><div class="spinner"></div><br>Carregando…</td></tr>';
+  try {
+    const res = await fetch('/api/byetech/pendentes');
+    const d   = await res.json();
+    _pendentes = d.pendentes || [];
+    renderPendentes();
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-msg" style="color:#ef4444">Erro: ${e.message}</td></tr>`;
+  }
+}
+
+function renderPendentes() {
+  const tbody = document.getElementById('pend-body');
+  if (!_pendentes.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-msg" style="color:var(--green)">✓ Nenhum pendente — tudo atualizado no Byetech!</td></tr>';
+    return;
+  }
+  tbody.innerHTML = _pendentes.map(p => {
+    const de = p.data_entrega ? new Date(p.data_entrega).toLocaleDateString('pt-BR') : '—';
+    const cpfFmt = fmtDoc(p.cliente_cpf || '');
+    const erro = (p.erro_ultimo || '').replace(/CPF_NAO_ENCONTRADO:[^:]+/,'CPF não encontrado no Byetech');
+    return `<tr id="pend-row-${p.id}">
+      <td><span style="font-weight:600">${esc(p.cliente_nome || '—')}</span></td>
+      <td style="font-family:monospace;font-size:12px">${esc(cpfFmt)}</td>
+      <td style="color:var(--green);font-weight:600">${de}</td>
+      <td style="text-align:center;color:var(--muted)">${p.tentativas || 0}</td>
+      <td><span class="pend-erro" title="${esc(p.erro_ultimo || '')}">${esc(erro || '—')}</span></td>
+      <td style="text-align:center">
+        <button class="btn-feito" id="btn-feito-${p.id}" onclick="marcarFeito(${p.id})">✓ Feito</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function marcarFeito(pid) {
+  const btn = document.getElementById('btn-feito-' + pid);
+  const row = document.getElementById('pend-row-' + pid);
+  if (!btn || btn.disabled) return;
+
+  btn.disabled = true;
+  btn.textContent = '…';
+
+  try {
+    const res = await fetch(`/api/byetech/pendentes/${pid}/done`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sucesso: true }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+
+    // Visual: risca a linha
+    row.classList.add('pend-done-row');
+    btn.textContent = '✓ OK';
+    btn.style.cssText = 'background:rgba(34,197,94,.1);color:var(--green);cursor:default';
+
+    // Atualiza contador da badge
+    const total = document.querySelectorAll('#pend-body tr:not(.pend-done-row)').length;
+    // Subtrai 1 pois o DOM ainda não atualizou
+    updatePendBadge(Math.max(0, (_pendentes.filter(p => !document.getElementById('pend-row-' + p.id + '')?.classList.contains('pend-done-row')).length - 1)));
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = '✓ Feito';
+    alert('Erro ao marcar: ' + e.message);
+  }
+}
+
+function updatePendBadge(n) {
+  const badge = document.getElementById('pend-badge');
+  badge.textContent = n;
+  badge.className = 'tab-badge' + (n === 0 ? ' zero' : '');
+}
+
+// Carrega contagem da badge ao iniciar
+async function loadPendBadge() {
+  try {
+    const res = await fetch('/api/byetech/pendentes');
+    const d   = await res.json();
+    updatePendBadge(d.total || 0);
+  } catch(_) {}
+}
+
 // Carrega ao iniciar
 loadData();
+loadPendBadge();
 </script>
 </body>
 </html>
