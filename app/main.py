@@ -1797,15 +1797,21 @@ async def debug_busca_cpf(cpf: str, token: str = "", paginas: int = 5):
             # 1. Sem filtro — primeiros 3 contratos (com raw para diagnóstico)
             r_nf = await client.get(f"{_API_URL}/api/contracts",
                 params={"page": 1, "per_page": 3}, headers=headers, cookies=cookies)
+            nf_http = r_nf.status_code
             nf_raw = r_nf.json()
             nf_items, nf_co, _ = _parse_contracts(nf_raw)
             nf_ids = [i.get("id") for i in nf_items]
             nf_total = nf_co.get("total", "?")
             nf_last  = nf_co.get("last_page", "?")
             # Estrutura bruta (primeiras chaves) para diagnóstico
-            nf_struct = {k: (type(v).__name__ if not isinstance(v, (dict,list)) else
+            nf_struct = {
+                "http_status": nf_http,
+                "keys": {k: (type(v).__name__ if not isinstance(v, (dict,list)) else
                              (f"dict({list(v.keys())[:5]})" if isinstance(v, dict) else f"list[{len(v)}]"))
-                         for k, v in nf_raw.items()} if isinstance(nf_raw, dict) else str(nf_raw)[:200]
+                         for k, v in nf_raw.items()} if isinstance(nf_raw, dict) else str(nf_raw)[:200],
+                "error_msg": nf_raw.get("message", "") if isinstance(nf_raw, dict) else "",
+                "raw_preview": str(nf_raw)[:300],
+            }
 
             # 2. Com filtro cpfCnpj
             r_f = await client.get(f"{_API_URL}/api/contracts",
