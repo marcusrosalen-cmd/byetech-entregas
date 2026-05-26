@@ -131,16 +131,24 @@ def _build_cpf_index(token: str) -> dict:
 
 # ── Order Detail ──────────────────────────────────────────────────────────────
 
-def _fetch_order(order_id) -> list:
-    req = urllib.request.Request(
-        API_ITEMS.format(order_id),
-        headers={"User-Agent": "Mozilla/5.0"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            return json.loads(r.read())
-    except Exception:
-        return []
+def _fetch_order(order_id, token: str = "") -> list:
+    url = API_ITEMS.format(order_id)
+    headers = {"User-Agent": "Mozilla/5.0"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    import time
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.loads(r.read())
+        except Exception as e:
+            if attempt < 2:
+                time.sleep(2 ** attempt)  # 1s, 2s backoff
+            else:
+                logger.warning(f"_fetch_order({order_id}) falhou após 3 tentativas: {e}")
+                return []
+    return []
 
 
 def _parse_order(data) -> dict:
@@ -230,11 +238,14 @@ async def scrape_signanddrive(clientes: list[dict]) -> list[dict]:
         )
 
         order_details: dict[int, dict] = {}
-        with ThreadPoolExecutor(max_workers=15) as ex:
-            futs = {ex.submit(_fetch_order, oid): oid for oid in order_map}
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futs = {ex.submit(_fetch_order, oid, token): oid for oid in order_map}
             for fut in as_completed(futs):
                 oid = futs[fut]
                 order_details[oid] = _parse_order(fut.result())
+
+        n_entregues = sum(1 for d in order_details.values() if d.get("entregue"))
+        logger.info(f"Sign & Drive: {len(order_details)} ordens consultadas, {n_entregues} entregues detectadas")
 
         resultados = []
         for oid, clis in order_map.items():
