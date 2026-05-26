@@ -1681,6 +1681,71 @@ async def debug_contrato_crm(byetech_id: str, token: str = ""):
         return {"error": str(e), "type": type(e).__name__}
 
 
+@app.get("/api/debug/busca-frota-movida")
+async def debug_busca_frota_movida(token: str = "", paginas: int = 20):
+    """
+    Varre as primeiras N páginas de contratos Movida no CRM e retorna
+    o primeiro onde movida_pedido_frota_id ou external_order_id estejam preenchidos.
+    Útil para descobrir o formato do ID real da locadora Movida.
+    """
+    secret = os.getenv("SECRET_KEY", "")
+    if secret and token != secret[:16]:
+        raise HTTPException(403, "Token inválido")
+
+    import httpx as _httpx
+    try:
+        from app.scrapers.byetech_crm import get_session, _make_headers, API_URL as _API_URL
+        cookies = await get_session()
+        headers = _make_headers(cookies)
+
+        encontrados = []
+        async with _httpx.AsyncClient(follow_redirects=True) as client:
+            for page in range(1, paginas + 1):
+                resp = await client.get(
+                    f"{_API_URL}/api/contracts",
+                    params={"page": page, "locadora_id[]": 2},  # 2 = Movida
+                    headers=headers, cookies=cookies, timeout=30,
+                )
+                if resp.status_code != 200:
+                    return {"erro": f"CRM HTTP {resp.status_code} na página {page}"}
+                data = resp.json()
+                contracts_obj = data.get("data", {}).get("contracts", {})
+                items = contracts_obj.get("data", [])
+                total_pages = contracts_obj.get("last_page", 1)
+
+                for c in items:
+                    order = c.get("order") or {}
+                    frota = order.get("movida_pedido_frota_id")
+                    ext = order.get("external_order_id")
+                    if frota or ext:
+                        client_obj = order.get("client") or {}
+                        encontrados.append({
+                            "id": c.get("id"),
+                            "uuid": c.get("uuid"),
+                            "cliente": client_obj.get("nome_completo"),
+                            "order_status": order.get("status"),
+                            "movida_pedido_frota_id": frota,
+                            "external_order_id": ext,
+                            "lm_pedido_id": order.get("lm_pedido_id"),
+                            "unidas_pedido_id": order.get("unidas_pedido_id"),
+                            "phase_id": c.get("phase_id"),
+                        })
+                        if len(encontrados) >= 5:
+                            return {"encontrados": encontrados, "paginas_varridas": page}
+
+                await asyncio.sleep(0.3)
+                if page >= total_pages:
+                    break
+
+        return {
+            "encontrados": encontrados,
+            "paginas_varridas": min(paginas, total_pages if 'total_pages' in dir() else paginas),
+            "mensagem": "Nenhum contrato com movida_pedido_frota_id/external_order_id preenchido encontrado." if not encontrados else None,
+        }
+    except Exception as e:
+        return {"error": str(e), "type": type(e).__name__}
+
+
 @app.get("/api/health")
 async def health_check():
     """
