@@ -39,12 +39,38 @@ STATUS_MAP = {
 
 
 def _date_windows():
-    """Janelas de data para paginacao: ano corrente + historico desde 2023."""
-    today = datetime.now().strftime("%Y-%m-%d")
-    year  = datetime.now().year
-    wins  = [(f"{year}-01-01", today)]
+    """
+    Janelas TRIMESTRAIS para evitar HTTP 400 da management API.
+
+    A API retorna 400 para janelas de ~6 meses dependendo do volume de pedidos
+    (ex: 2025-07-01 a 2025-12-31 falha). Trimestres de ~3 meses sao seguros.
+    Retorna janelas da mais recente para a mais antiga (prioriza dados recentes).
+    """
+    today = datetime.now()
+    year  = today.year
+    today_str = today.strftime("%Y-%m-%d")
+
+    # Trimestres: (inicio, fim)
+    Q = [
+        ("01-01", "03-31"),
+        ("04-01", "06-30"),
+        ("07-01", "09-30"),
+        ("10-01", "12-31"),
+    ]
+    cur_q = (today.month - 1) // 3  # 0=Q1 .. 3=Q4
+
+    wins = []
+    # Ano corrente: trimestres do mais recente ate o mais antigo
+    for q in range(cur_q, -1, -1):
+        ds = f"{year}-{Q[q][0]}"
+        de = today_str if q == cur_q else f"{year}-{Q[q][1]}"
+        wins.append((ds, de))
+
+    # Anos anteriores (2025, 2024, 2023): Q4 → Q1
     for y in range(year - 1, 2022, -1):
-        wins += [(f"{y}-07-01", f"{y}-12-31"), (f"{y}-01-01", f"{y}-06-30")]
+        for q in range(3, -1, -1):
+            wins.append((f"{y}-{Q[q][0]}", f"{y}-{Q[q][1]}"))
+
     return wins
 
 
