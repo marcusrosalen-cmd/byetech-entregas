@@ -1746,6 +1746,123 @@ async def debug_busca_frota_movida(token: str = "", paginas: int = 20):
         return {"error": str(e), "type": type(e).__name__}
 
 
+@app.get("/api/debug/busca-cpf")
+async def debug_busca_cpf(cpf: str, token: str = "", paginas: int = 5):
+    """
+    Diagnóstico: testa se GET /api/contracts?cpfCnpj=... filtra por CPF.
+    Compara resultado filtrado vs sem filtro para detectar se o parâmetro é ignorado.
+    Faz busca exaustiva em até N páginas para localizar o contrato real.
+
+    Exemplo: GET /api/debug/busca-cpf?cpf=35734870846&token=byetech-entregas
+    """
+    secret = os.getenv("SECRET_KEY", "")
+    if secret and token != secret[:16]:
+        raise HTTPException(403, "Token inválido")
+
+    import re as _re
+    import httpx as _httpx
+    try:
+        from app.scrapers.byetech_crm import get_session, _make_headers, API_URL as _API_URL, PHASE_NAMES
+
+        cpf_digits = _re.sub(r"\D", "", cpf)
+        cpf_norm = cpf_digits.zfill(11)
+
+        cookies = await get_session()
+        headers = _make_headers(cookies)
+
+        async with _httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+
+            # 1. Sem filtro — primeiros 3 contratos
+            r_nf = await client.get(f"{_API_URL}/api/contracts",
+                params={"page": 1, "per_page": 3}, headers=headers, cookies=cookies)
+            nf_data = r_nf.json()
+            nf_co = (nf_data.get("data") or {}).get("contracts") or {}
+            nf_items = nf_co.get("data", []) if isinstance(nf_co, dict) else []
+            nf_ids = [i.get("id") for i in nf_items]
+            nf_total = nf_co.get("total", "?")
+            nf_last  = nf_co.get("last_page", "?")
+
+            # 2. Com filtro cpfCnpj
+            r_f = await client.get(f"{_API_URL}/api/contracts",
+                params={"cpfCnpj": cpf_digits, "per_page": 3}, headers=headers, cookies=cookies)
+            f_data = r_f.json()
+            f_co = (f_data.get("data") or {}).get("contracts") or {}
+            f_items = f_co.get("data", []) if isinstance(f_co, dict) else []
+            f_ids = [i.get("id") for i in f_items]
+            f_total = f_co.get("total", "?")
+
+            filter_works = nf_ids != f_ids
+
+            def _extract_cpf(item):
+                order = item.get("order") or {}
+                client_obj = order.get("client") or {}
+                return _re.sub(r"\D", "", str(client_obj.get("num_cpf") or ""))
+
+            def _extract_nome(item):
+                order = item.get("order") or {}
+                client_obj = order.get("client") or {}
+                opp = order.get("opportunity") or {}
+                return client_obj.get("nome_completo") or opp.get("name") or "?"
+
+            # 3. Busca exaustiva para encontrar o contrato
+            encontrados = []
+            pagina = 1
+            total_pages_exaustiva = None
+            while pagina <= paginas:
+                r_p = await client.get(f"{_API_URL}/api/contracts",
+                    params={"page": pagina, "per_page": 100}, headers=headers, cookies=cookies)
+                if r_p.status_code != 200:
+                    break
+                d_p = r_p.json()
+                co_p = (d_p.get("data") or {}).get("contracts") or {}
+                items_p = co_p.get("data", []) if isinstance(co_p, dict) else []
+                if total_pages_exaustiva is None:
+                    total_pages_exaustiva = co_p.get("last_page", 1)
+
+                for item in items_p:
+                    cpf_api = _extract_cpf(item)
+                    if (cpf_api.lstrip("0") == cpf_norm.lstrip("0")
+                            or cpf_api == cpf_digits
+                            or cpf_api == cpf_norm):
+                        encontrados.append({
+                            "id": item.get("id"),
+                            "nome": _extract_nome(item),
+                            "cpf_api": cpf_api,
+                            "phase_id": item.get("phase_id"),
+                            "phase_nome": PHASE_NAMES.get(item.get("phase_id", ""), "?"),
+                            "entrega_definitivo": item.get("entrega_definitivo"),
+                            "retirada_provisorio": item.get("retirada_provisorio"),
+                            "placa_carro": item.get("placa_carro"),
+                        })
+
+                if pagina >= (total_pages_exaustiva or 1):
+                    break
+                pagina += 1
+
+            return {
+                "cpf_buscado": cpf_norm,
+                "filtro_cpfCnpj_funciona": filter_works,
+                "sem_filtro": {
+                    "total_contratos": nf_total,
+                    "total_paginas": nf_last,
+                    "primeiros_ids": nf_ids,
+                    "primeiros_cpfs": [_extract_cpf(i) for i in nf_items],
+                },
+                "com_filtro_cpfCnpj": {
+                    "total_retornado": f_total,
+                    "ids": f_ids,
+                    "cpfs": [_extract_cpf(i) for i in f_items],
+                },
+                "busca_exaustiva": {
+                    "paginas_varridas": pagina,
+                    "total_paginas_disponivel": total_pages_exaustiva,
+                    "encontrados": encontrados,
+                },
+            }
+    except Exception as e:
+        return {"error": str(e), "type": type(e).__name__}
+
+
 @app.get("/api/health")
 async def health_check():
     """
