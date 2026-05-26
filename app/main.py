@@ -5,6 +5,51 @@ import asyncio
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
+
+def _ensure_playwright() -> bool:
+    """
+    Garante que o pacote Python do Playwright e o browser Chromium estejam instalados.
+    Executa no startup para cobrir ambientes (ex: Render) onde o build pode ter falhado.
+    Retorna True se o Playwright ficou disponível, False caso contrário.
+    """
+    import subprocess, importlib
+
+    # 1. Verifica se o pacote Python já está instalado
+    try:
+        importlib.import_module("playwright")
+        pkg_ok = True
+    except ImportError:
+        pkg_ok = False
+
+    if not pkg_ok:
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "playwright==1.48.0"],
+                check=True, capture_output=True, timeout=120,
+            )
+            importlib.invalidate_caches()
+            pkg_ok = True
+        except Exception as e:
+            # Não conseguiu instalar o pacote — Playwright indisponível
+            return False
+
+    # 2. Garante que o browser Chromium está instalado
+    try:
+        result = subprocess.run(
+            ["playwright", "install", "chromium"],
+            capture_output=True, timeout=300,
+        )
+        if result.returncode != 0:
+            # Tenta com --with-deps (pode funcionar se as libs do sistema estiverem presentes)
+            subprocess.run(
+                ["playwright", "install", "--with-deps", "chromium"],
+                capture_output=True, timeout=300,
+            )
+    except Exception:
+        pass  # Falha silenciosa — o health check vai reportar o estado real
+
+    return pkg_ok
+
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -58,6 +103,10 @@ logger = logging.getLogger("main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Playwright — instala em background para não atrasar o startup
+    if sys.platform != "win32":  # Só no Linux (Render) — no Windows já é gerenciado localmente
+        asyncio.create_task(asyncio.to_thread(_ensure_playwright))
+
     # Banco de dados — crítico, mas trata erro sem derrubar o servidor
     try:
         await init_db()
