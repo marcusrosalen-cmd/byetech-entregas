@@ -1638,9 +1638,43 @@ async def debug_contrato_crm(byetech_id: str, token: str = ""):
 
         contract_obj = data.get("data", {}).get("contract", data) if isinstance(data, dict) else data
         flat = _flatten(contract_obj)
+
+        # Também tenta buscar atividades do contrato (podem conter IDs da locadora)
+        activities = []
+        try:
+            resp_act = await client.get(
+                f"{_API_URL}/api/contracts/{byetech_id}/activities",
+                headers=headers,
+                cookies=cookies,
+                timeout=15,
+            )
+            if resp_act.status_code == 200:
+                act_data = resp_act.json()
+                activities = act_data.get("data", act_data) if isinstance(act_data, dict) else act_data
+        except Exception:
+            pass
+
+        # Resumo de arrays no contrato (para diagnóstico)
+        def _array_summary(obj, prefix=""):
+            out = {}
+            if not isinstance(obj, dict):
+                return out
+            for k, v in obj.items():
+                key = f"{prefix}.{k}" if prefix else k
+                if isinstance(v, list):
+                    out[key] = f"[array com {len(v)} item(s)]"
+                    if v and isinstance(v[0], dict):
+                        out.update(_array_summary(v[0], f"{key}[0]"))
+                elif isinstance(v, dict):
+                    out.update(_array_summary(v, key))
+            return out
+
         return {
             "status": resp.status_code,
             "chaves_flat": flat,
+            "arrays": _array_summary(contract_obj),
+            "activities_count": len(activities) if isinstance(activities, list) else None,
+            "activities_sample": activities[:3] if isinstance(activities, list) else activities,
             "raw": contract_obj,
         }
     except Exception as e:
