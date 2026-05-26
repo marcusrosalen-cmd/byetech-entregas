@@ -1772,22 +1772,46 @@ async def debug_busca_cpf(cpf: str, token: str = "", paginas: int = 5):
 
         async with _httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
 
-            # 1. Sem filtro — primeiros 3 contratos
+            def _parse_contracts(raw_data):
+                """Extrai lista de contratos da resposta da API — tenta múltiplas estruturas."""
+                if not isinstance(raw_data, dict):
+                    return [], {}, raw_data
+                # Estrutura A: {data: {contracts: {data: [...], ...}}}
+                nested = raw_data.get("data") or {}
+                if isinstance(nested, dict):
+                    co = nested.get("contracts") or {}
+                    if isinstance(co, dict) and co.get("data"):
+                        return co.get("data", []), co, raw_data
+                    # Estrutura B: {data: {data: [...], ...}} (contracts direto)
+                    if co.get("data") is None and isinstance(nested.get("data"), list):
+                        return nested.get("data", []), nested, raw_data
+                # Estrutura C: {data: [...]} direto
+                if isinstance(nested, list):
+                    return nested, {}, raw_data
+                # Estrutura D: {contracts: {data: [...]}}
+                co2 = raw_data.get("contracts") or {}
+                if isinstance(co2, dict) and co2.get("data"):
+                    return co2.get("data", []), co2, raw_data
+                return [], {}, raw_data
+
+            # 1. Sem filtro — primeiros 3 contratos (com raw para diagnóstico)
             r_nf = await client.get(f"{_API_URL}/api/contracts",
                 params={"page": 1, "per_page": 3}, headers=headers, cookies=cookies)
-            nf_data = r_nf.json()
-            nf_co = (nf_data.get("data") or {}).get("contracts") or {}
-            nf_items = nf_co.get("data", []) if isinstance(nf_co, dict) else []
+            nf_raw = r_nf.json()
+            nf_items, nf_co, _ = _parse_contracts(nf_raw)
             nf_ids = [i.get("id") for i in nf_items]
             nf_total = nf_co.get("total", "?")
             nf_last  = nf_co.get("last_page", "?")
+            # Estrutura bruta (primeiras chaves) para diagnóstico
+            nf_struct = {k: (type(v).__name__ if not isinstance(v, (dict,list)) else
+                             (f"dict({list(v.keys())[:5]})" if isinstance(v, dict) else f"list[{len(v)}]"))
+                         for k, v in nf_raw.items()} if isinstance(nf_raw, dict) else str(nf_raw)[:200]
 
             # 2. Com filtro cpfCnpj
             r_f = await client.get(f"{_API_URL}/api/contracts",
                 params={"cpfCnpj": cpf_digits, "per_page": 3}, headers=headers, cookies=cookies)
-            f_data = r_f.json()
-            f_co = (f_data.get("data") or {}).get("contracts") or {}
-            f_items = f_co.get("data", []) if isinstance(f_co, dict) else []
+            f_raw = r_f.json()
+            f_items, f_co, _ = _parse_contracts(f_raw)
             f_ids = [i.get("id") for i in f_items]
             f_total = f_co.get("total", "?")
 
@@ -1814,10 +1838,9 @@ async def debug_busca_cpf(cpf: str, token: str = "", paginas: int = 5):
                 if r_p.status_code != 200:
                     break
                 d_p = r_p.json()
-                co_p = (d_p.get("data") or {}).get("contracts") or {}
-                items_p = co_p.get("data", []) if isinstance(co_p, dict) else []
+                items_p, co_p, _ = _parse_contracts(d_p)
                 if total_pages_exaustiva is None:
-                    total_pages_exaustiva = co_p.get("last_page", 1)
+                    total_pages_exaustiva = co_p.get("last_page", 1) if isinstance(co_p, dict) else 1
 
                 for item in items_p:
                     cpf_api = _extract_cpf(item)
@@ -1847,6 +1870,7 @@ async def debug_busca_cpf(cpf: str, token: str = "", paginas: int = 5):
                     "total_paginas": nf_last,
                     "primeiros_ids": nf_ids,
                     "primeiros_cpfs": [_extract_cpf(i) for i in nf_items],
+                    "estrutura_raw": nf_struct,
                 },
                 "com_filtro_cpfCnpj": {
                     "total_retornado": f_total,
