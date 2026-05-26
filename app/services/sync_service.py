@@ -78,7 +78,17 @@ async def _upsert_contrato(session: AsyncSession, data: dict, portal_update: boo
     status_anterior = existing.status_atual if existing else None
     mudou_status = existing and status_anterior != status_novo and status_novo
 
+    def _is_definitivo_entregue(s: str) -> bool:
+        """Retorna True para qualquer variante de 'Definitivo Entregue'."""
+        sl = (s or "").lower()
+        return "definitivo" in sl and "entregue" in sl
+
     if existing:
+        # Protege status "Definitivo Entregue": portal não pode desfazer entrega manual
+        if _is_definitivo_entregue(existing.status_atual) and not _is_definitivo_entregue(status_novo):
+            # Mantém o status de entrega — apenas ignora status regressivo do portal
+            mudou_status = False
+            status_novo = existing.status_atual
         # Sempre atualiza status e datas
         existing.status_anterior = status_anterior
         existing.status_atual = status_novo or existing.status_atual
