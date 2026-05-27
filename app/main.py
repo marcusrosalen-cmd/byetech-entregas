@@ -53,7 +53,7 @@ def _ensure_playwright() -> bool:
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends
@@ -1248,6 +1248,93 @@ async def metabase_sync(full: bool = False):
         return {"ok": True, **result}
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+class PushContratosBody(BaseModel):
+    contratos: list[dict]
+    fonte: str = "metabase_mcp"
+
+
+@app.post("/api/sync/push-contratos")
+async def push_contratos(body: PushContratosBody, db: AsyncSession = Depends(get_db)):
+    """
+    Recebe contratos pré-processados de uma fonte externa (ex: script local MCP)
+    e os insere/atualiza no banco.
+
+    Cada item deve ter os mesmos campos que _upsert_contrato espera:
+      fonte, id_externo, cliente_nome, cliente_cpf_cnpj, veiculo, placa,
+      status_atual, data_prevista_entrega (ISO str ou None),
+      data_entrega_definitiva (ISO str ou None), data_venda (ISO str ou None),
+      pedido_id_locadora (opcional)
+
+    Retorna {ok, importados, novas_entregas, erros}.
+    """
+    from app.services.sync_service import _upsert_contrato, _contrato_id, _update_byetech_crm_entrega
+    from app.database import SessionLocal as _SL, Contrato as _C
+    from sqlalchemy import select as _sel
+
+    # Contratos que já tinham entrega (para detectar novas transições)
+    async with _SL() as _s:
+        _res = await _s.execute(_sel(_C.id).where(_C.data_entrega_definitiva.is_not(None)))
+        ja_entregues: set = {row[0] for row in _res.all()}
+
+    corte_notificacao = datetime.utcnow() - timedelta(days=30)
+
+    importados = 0
+    novas_entregas = 0
+    erros = []
+
+    async with _SL() as session:
+        for raw in body.contratos:
+            try:
+                # Normaliza datas (podem vir como string ISO do JSON)
+                for campo in ("data_prevista_entrega", "data_entrega_definitiva", "data_venda"):
+                    v = raw.get(campo)
+                    if isinstance(v, str) and v:
+                        from app.scrapers.metabase import _parse_date
+                        raw[campo] = _parse_date(v)
+                    elif not v:
+                        raw[campo] = None
+
+                fonte  = raw.get("fonte", "")
+                id_ext = raw.get("id_externo", "")
+                cpf    = raw.get("cliente_cpf_cnpj", "")
+                cid    = _contrato_id(fonte, id_ext, cpf)
+                de     = raw.get("data_entrega_definitiva")
+
+                # Detecta nova entrega (contrato ainda não entregue no banco)
+                if de and cpf and cid not in ja_entregues:
+                    de_dt = de if isinstance(de, datetime) else datetime.combine(de, datetime.min.time())
+                    if de_dt >= corte_notificacao:
+                        novas_entregas += 1
+                        asyncio.create_task(_update_byetech_crm_entrega(
+                            cpf=cpf,
+                            placa=raw.get("placa", ""),
+                            data=de_dt,
+                            contrato_id=cid,
+                            cliente_nome=raw.get("cliente_nome", ""),
+                        ))
+
+                await _upsert_contrato(session, raw, portal_update=False)
+                importados += 1
+            except Exception as e:
+                nome = raw.get("cliente_nome", raw.get("id_externo", "?"))
+                erros.append(f"{nome}: {str(e)[:100]}")
+                logger.warning(f"[push-contratos] Erro {nome}: {e}")
+
+        await session.commit()
+
+    logger.info(
+        f"[push-contratos] fonte={body.fonte} "
+        f"importados={importados} novas_entregas={novas_entregas} erros={len(erros)}"
+    )
+    return {
+        "ok":             True,
+        "fonte":          body.fonte,
+        "importados":     importados,
+        "novas_entregas": novas_entregas,
+        "erros":          erros[:20],   # retorna no máximo 20 erros
+    }
 
 
 # ── API: Relatório completo manual ───────────────────────
