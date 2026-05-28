@@ -194,6 +194,7 @@
   <div class="topbar-right">
     <span id="last-updated">—</span>
     <button class="btn-refresh" onclick="loadData()">↻ Atualizar</button>
+    <button onclick="doLogout()" style="background:none;border:1px solid var(--muted,#8AABA0);color:var(--muted,#8AABA0);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;font-family:inherit" title="Sair da sessão">⏻ Sair</button>
   </div>
 </div>
 
@@ -447,6 +448,21 @@ loadData();
 
 // Auto-refresh a cada 5 minutos
 setInterval(loadData, 5 * 60 * 1000);
+
+async function doLogout() {
+  try { await fetch('/api/auth/logout', { method: 'POST' }); } catch(_) {}
+  window.location.href = '/login';
+}
+
+// Intercepta 401
+const _origFetch = window.fetch;
+window.fetch = async function(url, opts) {
+  const res = await _origFetch(url, opts);
+  if (res.status === 401 && !String(url).includes('/api/auth/')) {
+    window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+  }
+  return res;
+};
 </script>
 </body>
 </html>

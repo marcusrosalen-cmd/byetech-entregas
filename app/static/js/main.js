@@ -56,11 +56,23 @@ async function api(path, opts = {}) {
     headers: { 'Content-Type': 'application/json', ...opts.headers },
     ...opts,
   });
+  if (res.status === 401) {
+    // Sessão expirada — redireciona para login preservando a URL atual
+    window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+    return;
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || 'Erro na requisição');
   }
   return res.json();
+}
+
+async function doLogout() {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+  } catch (_) {}
+  window.location.href = '/login';
 }
 
 // ── Load contracts ────────────────────────────────────────

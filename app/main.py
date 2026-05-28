@@ -57,13 +57,18 @@ from datetime import datetime, date, timedelta
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
 from pydantic import BaseModel
 from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth import (
+    SESSION_COOKIE, create_session, revoke_session,
+    require_auth, check_auth_cookie,
+)
 
 from app.database import init_db, get_db, SessionLocal, Contrato, HistoricoStatus, AlertaEnviado, ByetechPendente
 from app.services.sync_service import (
@@ -176,6 +181,8 @@ def _static_ver(filename: str) -> str:
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
+    if not check_auth_cookie(request):
+        return RedirectResponse("/login", status_code=302)
     return templates.TemplateResponse(request, "index.html", {
         "js_ver": _static_ver("js/main.js"),
         "css_ver": _static_ver("css/style.css"),
@@ -184,7 +191,7 @@ async def dashboard(request: Request):
 
 # ── API: Contratos ────────────────────────────────────────
 @app.get("/api/contratos")
-async def get_contratos(db: AsyncSession = Depends(get_db)):
+async def get_contratos(db: AsyncSession = Depends(get_db), _auth=Depends(require_auth)):
     result = await db.execute(
         select(Contrato)
         .where(Contrato.data_entrega_definitiva.is_(None))
@@ -237,6 +244,7 @@ async def get_contratos(db: AsyncSession = Depends(get_db)):
 @app.get("/api/contratos/entregues")
 async def get_contratos_entregues(
     db: AsyncSession = Depends(get_db),
+    _auth=Depends(require_auth),
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     fonte: Optional[str] = None,
@@ -308,7 +316,7 @@ async def get_contratos_entregues(
 
 
 @app.get("/api/contratos/{contrato_id}")
-async def get_contrato(contrato_id: str, db: AsyncSession = Depends(get_db)):
+async def get_contrato(contrato_id: str, db: AsyncSession = Depends(get_db), _auth=Depends(require_auth)):
     import json, re as _re
     result = await db.execute(select(Contrato).where(Contrato.id == contrato_id))
     c = result.scalar_one_or_none()
@@ -373,7 +381,7 @@ class PatchContratoBody(BaseModel):
 
 
 @app.patch("/api/contratos/{contrato_id}")
-async def patch_contrato(contrato_id: str, body: PatchContratoBody, db: AsyncSession = Depends(get_db)):
+async def patch_contrato(contrato_id: str, body: PatchContratoBody, db: AsyncSession = Depends(get_db), _auth=Depends(require_auth)):
     """Atualiza observações e/ou nova previsão de entrega sem remover status de atraso."""
     result = await db.execute(select(Contrato).where(Contrato.id == contrato_id))
     c = result.scalar_one_or_none()
@@ -402,7 +410,7 @@ async def patch_contrato(contrato_id: str, body: PatchContratoBody, db: AsyncSes
 
 
 @app.post("/api/contratos/{contrato_id}/entregar")
-async def marcar_entregue(contrato_id: str, body: EntregarBody, db: AsyncSession = Depends(get_db)):
+async def marcar_entregue(contrato_id: str, body: EntregarBody, db: AsyncSession = Depends(get_db), _auth=Depends(require_auth)):
     result = await db.execute(select(Contrato).where(Contrato.id == contrato_id))
     c = result.scalar_one_or_none()
     if not c:
@@ -818,7 +826,7 @@ async def confirmar_entrega(contrato_id: str, body: ConfirmarBody, db: AsyncSess
 
 # ── API: Resumo de entregas do dia ───────────────────────
 @app.get("/api/entregas-hoje")
-async def entregas_hoje(db: AsyncSession = Depends(get_db)):
+async def entregas_hoje(db: AsyncSession = Depends(get_db), _auth=Depends(require_auth)):
     """Retorna todos os contratos marcados como entregues hoje."""
     hoje_inicio = datetime.combine(date.today(), datetime.min.time())
     hoje_fim    = datetime.combine(date.today(), datetime.max.time())
@@ -894,7 +902,7 @@ async def sync_status():
 
 # ── API: Fila Byetech pendentes ──────────────────────────
 @app.get("/api/byetech/pendentes")
-async def listar_pendentes(db: AsyncSession = Depends(get_db)):
+async def listar_pendentes(db: AsyncSession = Depends(get_db), _auth=Depends(require_auth)):
     """
     Lista todas as atualizações pendentes no Byetech CRM.
     Usado pelo script processar_pendentes.py para processar localmente.
@@ -994,8 +1002,11 @@ class ByetechLoginBody(BaseModel):
 
 
 @app.post("/api/byetech/login")
-async def byetech_login_manual(body: ByetechLoginBody):
-    """Login manual no Byetech CRM via email + senha + 2FA opcional."""
+async def byetech_login_manual(body: ByetechLoginBody, response: Response):
+    """
+    Login manual no Byetech CRM via email + senha + 2FA opcional.
+    Após sucesso, emite cookie de sessão da aplicação (byetech_app_session).
+    """
     try:
         from app.scrapers.byetech_crm import _login_via_api, set_remote_session
         cookies = await _login_via_api(
@@ -1012,6 +1023,17 @@ async def byetech_login_manual(body: ByetechLoginBody):
                 await _rebuild_cpf_map()
                 await _flush_byetech_pending()
             asyncio.create_task(_pos_login())
+
+            # ── Emite cookie de sessão da aplicação ──
+            session_token = create_session()
+            response.set_cookie(
+                key=SESSION_COOKIE,
+                value=session_token,
+                httponly=True,
+                samesite="lax",
+                max_age=43200,  # 12 horas
+            )
+
             msg = "✅ Sessão Byetech ativa!"
             if pending:
                 msg += f" Processando {pending} entrega(s) pendente(s)..."
@@ -2111,20 +2133,43 @@ async def health_check():
 
 
 
+# ── Auth: login e logout ─────────────────────────────────
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    """Página de login. Se já autenticado, redireciona para /."""
+    if check_auth_cookie(request):
+        return RedirectResponse("/", status_code=302)
+    return templates.TemplateResponse(request, "login.html")
+
+
+@app.post("/api/auth/logout")
+async def logout(request: Request, response: Response):
+    """Revoga a sessão atual e limpa o cookie."""
+    token = request.cookies.get(SESSION_COOKIE)
+    if token:
+        revoke_session(token)
+    response.delete_cookie(SESSION_COOKIE)
+    return {"ok": True}
+
+
 # ── Entregues: página de histórico de entregas ───────────
 @app.get("/entregues", response_class=HTMLResponse)
 async def entregues_page(request: Request):
+    if not check_auth_cookie(request):
+        return RedirectResponse(f"/login?next=/entregues", status_code=302)
     return templates.TemplateResponse(request, "entregues.html")
 
 
 # ── Dashboard: página de analytics ──────────────────────
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard_page(request: Request):
+    if not check_auth_cookie(request):
+        return RedirectResponse(f"/login?next=/dashboard", status_code=302)
     return templates.TemplateResponse(request, "dashboard.html")
 
 
 @app.get("/api/stats/dashboard")
-async def stats_dashboard(db: AsyncSession = Depends(get_db)):
+async def stats_dashboard(db: AsyncSession = Depends(get_db), _auth=Depends(require_auth)):
     """
     Retorna dados agregados para a aba de Dashboard:
     - KPIs gerais

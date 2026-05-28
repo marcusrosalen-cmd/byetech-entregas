@@ -319,6 +319,7 @@
   </nav>
   <div class="topbar-right">
     <span id="last-updated" style="font-size:12px;color:var(--muted)">—</span>
+    <button onclick="doLogout()" style="background:none;border:1px solid var(--muted);color:var(--muted);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;font-family:inherit" title="Sair da sessão">⏻ Sair</button>
   </div>
 </div>
 
@@ -772,6 +773,21 @@ async function loadPendBadge() {
 // Carrega ao iniciar
 loadData();
 loadPendBadge();
+
+async function doLogout() {
+  try { await fetch('/api/auth/logout', { method: 'POST' }); } catch(_) {}
+  window.location.href = '/login';
+}
+
+// Intercepta 401 nas chamadas fetch desta página
+const _origFetch = window.fetch;
+window.fetch = async function(url, opts) {
+  const res = await _origFetch(url, opts);
+  if (res.status === 401 && !String(url).includes('/api/auth/')) {
+    window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+  }
+  return res;
+};
 </script>
 </body>
 </html>
