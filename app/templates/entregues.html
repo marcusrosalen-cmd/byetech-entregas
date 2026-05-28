@@ -158,10 +158,12 @@
     }
     .btn-clear:hover { border-color: var(--red); color: var(--red); }
 
-    /* ── Table ── */
+    /* ── Table ──
+       NOTA: position:sticky no thead é incompatível com overflow-x:auto no wrapper.
+       Removido sticky do thead — o header fica fixo no topo da tabela (comportamento padrão). */
     .table-wrap { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    thead { position: sticky; top: 60px; z-index: 10; }
+    thead { /* sem sticky — evita bug de thead flutuando sobre as linhas */ }
     th {
       text-align: left;
       padding: 10px 12px;
@@ -259,7 +261,7 @@
     /* ── Pendentes Byetech ── */
     .pend-table-wrap { overflow-x: auto; }
     .pend-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .pend-table thead { position: sticky; top: 57px; z-index: 10; }
+    .pend-table thead { /* sem sticky — mesmo motivo do .table-wrap acima */ }
     .pend-table th {
       text-align: left;
       padding: 10px 12px;
