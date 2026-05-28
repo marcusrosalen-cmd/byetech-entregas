@@ -62,7 +62,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
 from pydantic import BaseModel
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import (
@@ -190,11 +190,23 @@ async def dashboard(request: Request):
 
 
 # ── API: Contratos ────────────────────────────────────────
+_STATUS_EXCLUIDOS = [
+    'Definitivo entregue', 'Definitivo Entregue',
+    'Cancelado', 'cancelado',
+]
+
+
 @app.get("/api/contratos")
 async def get_contratos(db: AsyncSession = Depends(get_db), _auth=Depends(require_auth)):
     result = await db.execute(
         select(Contrato)
-        .where(Contrato.data_entrega_definitiva.is_(None))
+        .where(
+            Contrato.data_entrega_definitiva.is_(None),
+            or_(
+                Contrato.status_atual.is_(None),
+                Contrato.status_atual.notin_(_STATUS_EXCLUIDOS),
+            ),
+        )
         .order_by(Contrato.data_prevista_entrega.asc().nullslast())
     )
     contratos = result.scalars().all()
@@ -2133,6 +2145,62 @@ async def health_check():
 
 
 
+# ── API: Limpeza de registros obsoletos ──────────────────
+@app.post("/api/admin/cleanup-stale")
+async def cleanup_stale_contratos(db: AsyncSession = Depends(get_db), _auth=Depends(require_auth)):
+    """
+    Remove registros obsoletos do banco:
+    - Contratos com status 'Definitivo entregue' SEM data_entrega_definitiva
+      (importados por syncs antigos via card público que não registravam a data)
+    - Contratos com status 'Cancelado' SEM data_entrega_definitiva
+
+    Execute uma única vez após o deploy para limpar a acumulação de syncs antigos.
+    A remoção é segura: os contratos relevantes continuam sendo sincronizados
+    semanalmente via MCP e aparecem na aba "Entregues" com a data correta.
+    """
+    from sqlalchemy import delete
+
+    # Conta antes
+    res_def = await db.execute(
+        select(func.count()).select_from(Contrato).where(
+            Contrato.data_entrega_definitiva.is_(None),
+            Contrato.status_atual.in_(['Definitivo entregue', 'Definitivo Entregue']),
+        )
+    )
+    res_can = await db.execute(
+        select(func.count()).select_from(Contrato).where(
+            Contrato.data_entrega_definitiva.is_(None),
+            Contrato.status_atual.in_(['Cancelado', 'cancelado']),
+        )
+    )
+    n_definitivo = res_def.scalar() or 0
+    n_cancelado  = res_can.scalar() or 0
+
+    # Remove
+    await db.execute(
+        delete(Contrato).where(
+            Contrato.data_entrega_definitiva.is_(None),
+            Contrato.status_atual.in_([
+                'Definitivo entregue', 'Definitivo Entregue',
+                'Cancelado', 'cancelado',
+            ]),
+        )
+    )
+    await db.commit()
+
+    total_removidos = n_definitivo + n_cancelado
+    logger.info(
+        f"[cleanup] Removidos {total_removidos} contratos obsoletos "
+        f"(definitivo={n_definitivo}, cancelado={n_cancelado})"
+    )
+    return {
+        "ok": True,
+        "removidos": total_removidos,
+        "definitivo_entregue": n_definitivo,
+        "cancelado": n_cancelado,
+    }
+
+
 # ── Auth: login e logout ─────────────────────────────────
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
@@ -2185,9 +2253,15 @@ async def stats_dashboard(db: AsyncSession = Depends(get_db), _auth=Depends(requ
     hoje = datetime.now().date()
     hoje_ini = datetime.combine(hoje, datetime.min.time())
 
-    # Todos os ativos
+    # Todos os ativos (exclui "Definitivo entregue" e "Cancelado" sem data de entrega)
     res_ativos = await db.execute(
-        select(Contrato).where(Contrato.data_entrega_definitiva.is_(None))
+        select(Contrato).where(
+            Contrato.data_entrega_definitiva.is_(None),
+            or_(
+                Contrato.status_atual.is_(None),
+                Contrato.status_atual.notin_(_STATUS_EXCLUIDOS),
+            ),
+        )
     )
     ativos = res_ativos.scalars().all()
 
