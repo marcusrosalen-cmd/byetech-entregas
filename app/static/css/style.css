@@ -93,6 +93,53 @@ header {
 .header-actions { display: flex; align-items: center; gap: .5rem; flex-shrink: 0; }
 .last-sync { font-size: .72rem; color: var(--muted); white-space: nowrap; }
 
+/* Nav links no header */
+.nav-link {
+  color: var(--muted);
+  text-decoration: none;
+  padding: 5px 11px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: color .15s, background .15s;
+  white-space: nowrap;
+}
+.nav-link:hover { color: var(--cream); background: rgba(0,255,255,.07); }
+.nav-link.active { color: var(--primary); font-weight: 700; background: rgba(0,255,255,.1); }
+
+/* Dropdown de ações no header */
+.hdr-dropdown { position: relative; }
+.hdr-dropdown-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+  min-width: 200px;
+  z-index: 9999;
+  box-shadow: 0 8px 24px rgba(0,0,0,.5);
+}
+.hdr-dropdown-menu.open { display: block; }
+.hdr-dropdown-menu button {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 8px 12px;
+  text-align: left;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+  white-space: nowrap;
+}
+.hdr-dropdown-menu button:hover { background: rgba(0,255,255,.08); color: var(--primary); }
+
 /* ─────────────────────────────────────────────
    BUTTONS
 ───────────────────────────────────────────── */

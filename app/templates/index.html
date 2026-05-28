@@ -24,10 +24,10 @@
     </div>
 
     <!-- Navegação principal -->
-    <nav style="display:flex;gap:4px;align-items:center">
-      <a href="/" style="color:var(--primary);text-decoration:none;padding:5px 12px;border-radius:6px;font-size:13px;font-weight:600;background:rgba(108,99,255,.12)">Contratos</a>
-      <a href="/entregues" style="color:var(--muted);text-decoration:none;padding:5px 12px;border-radius:6px;font-size:13px;font-weight:500;transition:color .15s" onmouseover="this.style.color='var(--cream)'" onmouseout="this.style.color='var(--muted)'">Entregues</a>
-      <a href="/dashboard" style="color:var(--muted);text-decoration:none;padding:5px 12px;border-radius:6px;font-size:13px;font-weight:500;transition:color .15s" onmouseover="this.style.color='var(--cream)'" onmouseout="this.style.color='var(--muted)'">Dashboard</a>
+    <nav style="display:flex;gap:2px;align-items:center">
+      <a href="/" class="nav-link active">📋 Contratos</a>
+      <a href="/entregues" class="nav-link">📦 Entregues</a>
+      <a href="/dashboard" class="nav-link">📊 Dashboard</a>
     </nav>
 
     <!-- Conexões às plataformas -->
@@ -40,34 +40,37 @@
 
     <div class="header-actions">
       <span id="last-sync" class="last-sync">–</span>
-      <button class="btn btn-outline btn-sm" id="btn-renovar" onclick="openByetechLoginModal()" title="Sessão Byetech expirada — clique para fazer login" style="display:none;border-color:var(--warning);color:var(--warning)">
+
+      <!-- Alerta de sessão expirada (oculto por padrão) -->
+      <button class="btn btn-sm" id="btn-renovar" onclick="openByetechLoginModal()" title="Sessão Byetech expirada — clique para fazer login" style="display:none;background:rgba(255,179,64,.15);border:1px solid var(--warning);color:var(--warning)">
         🔑 Renovar sessão
       </button>
-      <button class="btn btn-outline btn-sm" id="btn-sync" onclick="triggerSync()">
-        <span>⟳</span> Byetech CRM
+
+      <!-- Ações primárias sempre visíveis -->
+      <button class="btn btn-outline btn-sm" id="btn-sync" onclick="triggerSync()" title="Sincronizar com Byetech CRM">
+        ⟳ Byetech
       </button>
-      <button class="btn btn-outline btn-sm" id="btn-metabase" onclick="triggerMetabaseSync()">
-        <span>⟳</span> Metabase
+      <button class="btn btn-outline btn-sm" id="btn-metabase" onclick="triggerMetabaseSync()" title="Sincronizar dados do Metabase">
+        ⟳ Metabase
       </button>
-      <button class="btn btn-outline btn-sm" onclick="triggerRelatorioCompleto()" title="Envia relatório completo agora no Slack">
-        📋 Relatório
-      </button>
-      <button class="btn btn-outline btn-sm" id="btn-validar" onclick="triggerValidarGwmLm()" title="Valida entregas GWM/LM, atualiza Metabase 4 dias e envia relatório Slack">
-        🧪 Validar GWM/LM
-      </button>
-      <button class="btn btn-outline btn-sm" id="btn-sd" onclick="triggerSignAndDriveSync()" title="Consulta API Sign & Drive: detecta novos entregues e mudanças de status">
-        <span>⟳</span> Sign &amp; Drive
-      </button>
-      <button class="btn btn-outline btn-sm" onclick="triggerHealthCheck()" title="Valida todas as conexões do sistema">
-        🔌 Conexões
-      </button>
-      <button class="btn btn-outline btn-sm" onclick="openByetechLoginModal()" title="Fazer login no Byetech CRM com suas credenciais" style="border-color:var(--warning);color:var(--warning)">
-        🔑 Login Byetech
-      </button>
-      <button class="btn btn-primary btn-sm" onclick="openMovidaModal()">
-        ↑ Movida
-      </button>
-      <button class="btn btn-outline btn-sm" onclick="doLogout()" title="Sair da sessão" style="border-color:var(--muted);color:var(--muted)">
+
+      <!-- Dropdown: ações secundárias -->
+      <div class="hdr-dropdown" id="hdr-dropdown">
+        <button class="btn btn-outline btn-sm" onclick="toggleHdrDropdown(event)" title="Mais ações">
+          ⚙ Mais ▾
+        </button>
+        <div class="hdr-dropdown-menu" id="hdr-dropdown-menu">
+          <button onclick="openByetechLoginModal();closeHdrDropdown()">🔑 Login Byetech</button>
+          <button id="btn-sd" onclick="triggerSignAndDriveSync();closeHdrDropdown()" title="Consulta API Sign & Drive">⟳ Sign &amp; Drive</button>
+          <button id="btn-validar" onclick="triggerValidarGwmLm();closeHdrDropdown()" title="Valida entregas GWM/LM no portal">🧪 Validar GWM/LM</button>
+          <button onclick="triggerRelatorioCompleto();closeHdrDropdown()" title="Envia relatório no Slack agora">📋 Relatório Slack</button>
+          <button onclick="openMovidaModal();closeHdrDropdown()">↑ Upload Movida</button>
+          <hr style="border-color:var(--border);margin:4px 0">
+          <button onclick="triggerHealthCheck();closeHdrDropdown()" title="Verifica todas as conexões">🔌 Verificar conexões</button>
+        </div>
+      </div>
+
+      <button class="btn btn-sm" onclick="doLogout()" title="Sair da sessão" style="background:none;border:1px solid var(--border);color:var(--muted)">
         ⏻ Sair
       </button>
     </div>
@@ -397,5 +400,17 @@
 <div id="toast" class="toast hidden"></div>
 
 <script src="/static/js/main.js?v={{ js_ver }}"></script>
+<script>
+function toggleHdrDropdown(e) {
+  e.stopPropagation();
+  document.getElementById('hdr-dropdown-menu').classList.toggle('open');
+}
+function closeHdrDropdown() {
+  document.getElementById('hdr-dropdown-menu').classList.remove('open');
+}
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('#hdr-dropdown')) closeHdrDropdown();
+});
+</script>
 </body>
 </html>

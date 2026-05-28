@@ -5,18 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Dashboard — Byetech Entregas</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap">
   <style>
     :root {
-      --bg: #0f1117;
-      --card: #1a1d27;
-      --border: #2d3048;
-      --accent: #6c63ff;
-      --red: #ef4444;
+      --bg: #001820;
+      --card: #002838;
+      --border: #00607A;
+      --accent: #00FFFF;
+      --red: #FF5A5A;
       --orange: #f97316;
-      --yellow: #eab308;
-      --green: #22c55e;
-      --text: #e2e8f0;
-      --muted: #94a3b8;
+      --yellow: #FFB340;
+      --green: #00E5A0;
+      --text: #FFF3D4;
+      --muted: #8AABA0;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; min-height: 100vh; }
@@ -25,33 +27,52 @@
     .topbar {
       background: var(--card);
       border-bottom: 1px solid var(--border);
-      padding: 14px 24px;
+      padding: 0 24px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       position: sticky;
       top: 0;
       z-index: 100;
+      height: 60px;
+      box-shadow: 0 2px 16px rgba(0,0,0,.4);
     }
-    .topbar-logo { font-size: 18px; font-weight: 700; color: var(--accent); }
+    .topbar-logo {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 16px; font-weight: 700; color: var(--text);
+      text-decoration: none;
+    }
+    .topbar-logo-mark {
+      width: 32px; height: 32px;
+      background: linear-gradient(135deg, var(--accent), #00CCCC);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 900; font-size: 1rem; color: #001820;
+      box-shadow: 0 0 10px rgba(0,255,255,.3);
+    }
+    .topbar-nav { display: flex; gap: 2px; align-items: center; }
     .topbar-nav a {
       color: var(--muted);
       text-decoration: none;
-      margin-left: 20px;
-      font-size: 14px;
-      transition: color 0.2s;
+      padding: 5px 11px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      transition: color .15s, background .15s;
+      white-space: nowrap;
     }
-    .topbar-nav a:hover, .topbar-nav a.active { color: var(--text); }
+    .topbar-nav a:hover { color: var(--text); background: rgba(0,255,255,.07); }
+    .topbar-nav a.active { color: var(--accent); font-weight: 700; background: rgba(0,255,255,.1); }
     .topbar-right { display: flex; align-items: center; gap: 12px; }
     .btn-refresh {
       background: var(--accent);
-      color: #fff;
+      color: #001820;
       border: none;
       border-radius: 8px;
-      padding: 8px 16px;
+      padding: 7px 16px;
       font-size: 13px;
       cursor: pointer;
-      font-weight: 600;
+      font-weight: 700;
     }
     .btn-refresh:hover { opacity: 0.88; }
     #last-updated { font-size: 12px; color: var(--muted); }
@@ -73,11 +94,11 @@
       padding: 20px 16px;
       text-align: center;
     }
-    .kpi-card.red    { border-color: var(--red);    background: rgba(239,68,68,.08);  }
+    .kpi-card.red    { border-color: var(--red);    background: rgba(255,90,90,.08);  }
     .kpi-card.orange { border-color: var(--orange); background: rgba(249,115,22,.08); }
-    .kpi-card.yellow { border-color: var(--yellow); background: rgba(234,179,8,.08);  }
-    .kpi-card.green  { border-color: var(--green);  background: rgba(34,197,94,.08);  }
-    .kpi-card.purple { border-color: var(--accent); background: rgba(108,99,255,.08); }
+    .kpi-card.yellow { border-color: var(--yellow); background: rgba(255,179,64,.08); }
+    .kpi-card.green  { border-color: var(--green);  background: rgba(0,229,160,.08);  }
+    .kpi-card.purple { border-color: var(--accent); background: rgba(0,255,255,.08);  }
     .kpi-num {
       font-size: 36px;
       font-weight: 800;
@@ -185,11 +206,14 @@
 <body>
 
 <div class="topbar">
-  <div class="topbar-logo">📦 Byetech Entregas</div>
+  <a href="/" class="topbar-logo">
+    <div class="topbar-logo-mark">B</div>
+    <span>Byecar <span style="color:var(--accent);font-weight:400">Entregas</span></span>
+  </a>
   <nav class="topbar-nav">
-    <a href="/">Contratos</a>
-    <a href="/entregues">Entregues</a>
-    <a href="/dashboard" class="active">Dashboard</a>
+    <a href="/">📋 Contratos</a>
+    <a href="/entregues">📦 Entregues</a>
+    <a href="/dashboard" class="active">📊 Dashboard</a>
   </nav>
   <div class="topbar-right">
     <span id="last-updated">—</span>
