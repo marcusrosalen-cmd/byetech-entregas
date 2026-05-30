@@ -213,6 +213,30 @@ async def fetch_contracts_by_date(dt: date) -> list[dict]:
     ]
 
 
+async def fetch_historico_entregues() -> list[dict]:
+    """
+    Busca TODOS os contratos com data_entrega_definitivo cadastrada no Metabase,
+    independente de contrato_ativo. Usado para importação histórica de entregas.
+
+    Idempotente: pode ser chamado várias vezes — o upsert apenas atualiza
+    data_entrega_definitiva nos registros já existentes ou cria novos.
+    """
+    rows = await _fetch_metabase()
+    result = []
+    for r in rows:
+        if r.get("estorno"):
+            continue
+        data_ent = _parse_date(r.get("data_entrega_definitivo"))
+        if not data_ent:
+            continue  # sem data = ainda não entregue
+        result.append(_row_to_contrato(r))
+    logger.info(
+        f"[metabase] histórico: {len(result)} contratos entregues "
+        f"(de {len(rows)} registros totais no card)"
+    )
+    return result
+
+
 def rows_to_contratos(rows: list[dict]) -> list[dict]:
     """
     Converte linhas brutas do Metabase MCP (formato da query direta ao analytic_db)

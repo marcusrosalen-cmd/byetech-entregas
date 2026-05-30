@@ -364,6 +364,7 @@
   </nav>
   <div class="topbar-right">
     <span id="last-updated" style="font-size:12px;color:var(--muted)">—</span>
+    <button id="btn-importar" onclick="importarHistorico()" style="background:rgba(0,229,160,.12);border:1px solid rgba(0,229,160,.4);color:var(--green);border-radius:6px;padding:5px 14px;font-size:12px;cursor:pointer;font-family:inherit;font-weight:700;transition:all .15s" title="Importar histórico de entregas do Metabase">⬆ Importar Metabase</button>
     <button onclick="doLogout()" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer;font-family:inherit;transition:color .15s,border-color .15s" onmouseover="this.style.color='var(--red)';this.style.borderColor='var(--red)'" onmouseout="this.style.color='var(--muted)';this.style.borderColor='var(--border)'" title="Sair da sessão">⏻ Sair</button>
   </div>
 </div>
@@ -819,6 +820,49 @@ async function loadPendBadge() {
     const d   = await res.json();
     updatePendBadge(d.total || 0);
   } catch(_) {}
+}
+
+// ── Importar histórico do Metabase ────────────────────────────────────────────
+async function importarHistorico() {
+  const btn = document.getElementById('btn-importar');
+  if (btn.disabled) return;
+
+  const confirmar = confirm(
+    'Importar todos os contratos entregues do Metabase?\n\n' +
+    'A operação é idempotente (segura para repetir).\n' +
+    'Pode demorar 30–60 segundos.'
+  );
+  if (!confirmar) return;
+
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = '⟳ Importando...';
+  btn.style.opacity = '0.7';
+
+  try {
+    const res = await fetch('/api/sync/import-historico-entregues', { method: 'POST' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const d = await res.json();
+    btn.textContent = '✓ Concluído';
+    btn.style.borderColor = 'var(--green)';
+    setTimeout(() => {
+      btn.textContent = originalText;
+      btn.style.opacity = '1';
+      btn.disabled = false;
+    }, 3000);
+    // Recarrega a tabela sem filtro de data para ver os históricos
+    _state.fromDate = '';
+    _state.toDate   = '';
+    document.getElementById('f-from').value = '';
+    document.getElementById('f-to').value   = '';
+    loadData();
+    alert(`✓ Importação concluída!\n${d.importados} contratos processados (${d.criados} novos, ${d.atualizados} atualizados).`);
+  } catch(e) {
+    alert('Erro na importação: ' + e.message);
+    btn.textContent = originalText;
+    btn.style.opacity = '1';
+    btn.disabled = false;
+  }
 }
 
 // Carrega ao iniciar

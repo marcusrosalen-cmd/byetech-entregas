@@ -1717,6 +1717,18 @@ async def sync_gwm_portal():
     return {"ok": True, "message": "Sync GWM Portal iniciada. Resultado chegara no Slack."}
 
 
+@app.post("/api/sync/import-historico-entregues")
+async def import_historico_entregues(_auth=Depends(require_auth)):
+    """
+    Importa todos os contratos entregues históricos do Metabase para o banco local.
+    Idempotente — pode ser chamado várias vezes.
+    Retorna: {importados, criados, atualizados}
+    """
+    from app.services.sync_service import run_historico_entregues_import
+    result = await run_historico_entregues_import()
+    return result
+
+
 @app.get("/api/debug/contrato-crm/{byetech_id}")
 async def debug_contrato_crm(byetech_id: str, token: str = ""):
     """

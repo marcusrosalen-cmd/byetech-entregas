@@ -1272,3 +1272,66 @@ async def run_metabase_sync(full: bool = False) -> dict:
 
     logger.info(f"Metabase sync: {importados} contratos processados, {len(novas_entregas)} entrega(s) nova(s)")
     return {"importados": importados, "novas_entregas": len(novas_entregas)}
+
+
+async def run_historico_entregues_import() -> dict:
+    """
+    Importa todos os contratos entregues históricos do Metabase.
+
+    Lógica:
+    - Busca todos os registros com data_entrega_definitivo preenchido
+    - Faz upsert no banco local (portal_update=False para atualizar
+      nome, veículo e vendedor também)
+    - NÃO dispara notificação Byetech (dados históricos, já processados)
+    - Idempotente: pode ser chamado múltiplas vezes sem efeito colateral
+
+    Retorna: {importados, criados, atualizados}
+    """
+    from app.scrapers.metabase import fetch_historico_entregues
+
+    logger.info("[historico] Iniciando importação de entregas históricas do Metabase...")
+    contratos = await fetch_historico_entregues()
+
+    if not contratos:
+        logger.warning("[historico] Nenhum contrato entregue retornado pelo Metabase.")
+        return {"importados": 0, "criados": 0, "atualizados": 0}
+
+    criados    = 0
+    atualizados = 0
+    BATCH = 200  # commit a cada 200 registros para não bloquear
+
+    async with SessionLocal() as session:
+        for i, c in enumerate(contratos):
+            # Garante status correto
+            if not c.get("status_atual") or "entregue" not in (c.get("status_atual") or "").lower():
+                c["status_atual"] = "Definitivo entregue"
+
+            # Verifica se já existe para saber se é criação ou update
+            fonte  = c.get("fonte", "")
+            id_ext = c.get("id_externo", "")
+            cpf    = c.get("cliente_cpf_cnpj", "")
+            cid    = _contrato_id(fonte, id_ext, cpf)
+
+            res = await session.execute(select(Contrato).where(Contrato.id == cid))
+            existe = res.scalar_one_or_none() is not None
+
+            await _upsert_contrato(session, c, portal_update=False)
+
+            if existe:
+                atualizados += 1
+            else:
+                criados += 1
+
+            # Commit parcial para não acumular muita memória
+            if (i + 1) % BATCH == 0:
+                await session.commit()
+                logger.info(f"[historico] {i + 1}/{len(contratos)} processados...")
+
+        await session.commit()
+
+    total = criados + atualizados
+    logger.info(
+        f"[historico] Concluído: {total} contratos — "
+        f"{criados} criados, {atualizados} atualizados"
+    )
+    return {"importados": total, "criados": criados, "atualizados": atualizados}
