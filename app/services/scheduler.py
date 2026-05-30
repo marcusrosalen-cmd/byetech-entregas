@@ -55,13 +55,67 @@ async def _push_session_to_render():
         logger.warning(f"[Scheduler] Push sessão erro: {e}")
 
 
+async def _get_pending_count() -> int:
+    """Retorna quantos itens estão na fila byetech_pendentes sem processamento."""
+    try:
+        from app.database import SessionLocal, ByetechPendente
+        from sqlalchemy import select, func
+        async with SessionLocal() as s:
+            res = await s.execute(
+                select(func.count()).select_from(ByetechPendente)
+                .where(ByetechPendente.processado_em.is_(None))
+            )
+            return res.scalar() or 0
+    except Exception:
+        return 0
+
+
+async def _slack_alerta_sessao_byetech(motivo: str):
+    """
+    Envia alerta Slack acionável pedindo login manual no Byetech CRM.
+    Inclui contagem de pendentes e URL do portal.
+    """
+    import os
+    portal_url = os.getenv("RENDER_SERVICE_URL", "https://byetech-entregas.onrender.com")
+    pendentes  = await _get_pending_count()
+
+    linhas = [
+        ":rotating_light: *Login Byetech CRM necessário*",
+        f"> {motivo}",
+        "",
+        f"*Acesse o portal:* {portal_url}",
+        "1. Clique em *⚙ Mais ▾* (menu lateral)",
+        "2. Clique em *🔑 Login Byetech*",
+        "3. Informe e-mail, senha e código 2FA",
+        "",
+        "*Impacto nos syncs de hoje:*",
+        "• 10:00 — Sync completo Byetech CRM",
+        "• 10:20 — Sign & Drive / VW",
+        "• 10:40 — GWM / LM",
+        "Todos dependem da sessão para atualizar o CRM quando houver entrega.",
+    ]
+    if pendentes > 0:
+        linhas += [
+            "",
+            f":inbox_tray: *{pendentes} atualização(ões) na fila* aguardando sessão válida.",
+            "Serão processadas automaticamente após o login.",
+        ]
+
+    try:
+        from app.services.slack_service import get_or_create_channel, _post
+        channel = await get_or_create_channel()
+        await _post(channel=channel, text="\n".join(linhas))
+    except Exception as slack_e:
+        logger.warning(f"[scheduler] Slack alerta sessão: {slack_e}")
+
+
 async def job_renew_byetech_session():
     """
     Renova automaticamente a sessão Byetech CRM via API (sem Playwright).
     Roda às 09:45, antes de todos os syncs do dia.
     Se a sessão já está válida, não faz nada.
     Se está expirada, tenta login via API pura (httpx).
-    Notifica Slack apenas se a renovação falhar.
+    Se precisar de 2FA, envia alerta Slack acionável com URL e contagem de pendentes.
     """
     logger.info("⏰ [scheduler] Verificando sessão Byetech...")
     from app.scrapers.byetech_crm import (
@@ -94,26 +148,21 @@ async def job_renew_byetech_session():
         err_msg = str(e)
         if "2FA_REQUIRED" in err_msg:
             logger.warning(
-                "[scheduler] Renovação Byetech requer 2FA — não é possível renovar automaticamente. "
-                "Acesse /byetech/login no painel para fornecer o código."
+                "[scheduler] Renovação Byetech requer 2FA — aguardando login manual."
             )
+            await _slack_alerta_sessao_byetech(
+                "Sessão expirada e renovação automática bloqueada por 2FA."
+            )
+            return
         else:
             logger.error(f"[scheduler] Falha ao renovar sessão Byetech: {e}")
+            await _slack_alerta_sessao_byetech(
+                f"Falha técnica ao renovar sessão: `{err_msg[:120]}`"
+            )
+            return
 
-    # 3. Falhou — notifica Slack
-    try:
-        from app.services.slack_service import get_client, get_or_create_channel
-        channel = await get_or_create_channel()
-        client = get_client()
-        await client.chat_postMessage(
-            channel=channel,
-            text=(
-                ":warning: *Sessão Byetech não renovada* — o sync de hoje usará os dados do banco local.\n"
-                "Acesse o painel e use `/byetech/login` para renovar manualmente, ou execute `push_session_render.py` localmente."
-            ),
-        )
-    except Exception as slack_e:
-        logger.warning(f"[scheduler] Slack notificação sessão: {slack_e}")
+    # 3. Falhou sem exceção (retornou None) — notifica Slack
+    await _slack_alerta_sessao_byetech("Renovação automática não retornou sessão válida.")
 
 
 async def job_sync_all():
@@ -290,6 +339,62 @@ async def job_gwm_lm_daily():
         logger.error(f"❌ [scheduler] GWM/LM erro: {e}")
 
 
+async def job_reconcile_stale():
+    """
+    Job semanal (segunda 08:30): remove contratos 'órfãos' — ativos no banco
+    mas não retornados por nenhum sync nos últimos 7 dias.
+    Evita acúmulo de registros que foram cancelados ou entregues sem registro formal.
+    """
+    from app.database import SessionLocal, Contrato
+    from sqlalchemy import delete, select, func
+
+    cutoff = datetime.utcnow() - timedelta(days=7)
+    status_excluidos = [
+        "Definitivo entregue", "Definitivo Entregue",
+        "definitivo entregue", "definitivo_entregue",
+        "Cancelado", "cancelado",
+    ]
+
+    async with SessionLocal() as session:
+        res = await session.execute(
+            select(func.count()).select_from(Contrato).where(
+                Contrato.ultima_atualizacao < cutoff,
+                Contrato.data_entrega_definitiva.is_(None),
+                Contrato.status_atual.not_in(status_excluidos),
+            )
+        )
+        n_orphans = res.scalar() or 0
+
+        if n_orphans == 0:
+            logger.info("[scheduler] Reconciliação semanal: nenhum órfão encontrado.")
+            return
+
+        await session.execute(
+            delete(Contrato).where(
+                Contrato.ultima_atualizacao < cutoff,
+                Contrato.data_entrega_definitiva.is_(None),
+                Contrato.status_atual.not_in(status_excluidos),
+            )
+        )
+        await session.commit()
+
+    logger.info(f"[scheduler] Reconciliação semanal: {n_orphans} contratos órfãos removidos.")
+
+    try:
+        from app.services.slack_service import get_or_create_channel, _post
+        channel = await get_or_create_channel()
+        await _post(
+            channel=channel,
+            text=(
+                f":broom: *Reconciliação semanal*: {n_orphans} contrato(s) removido(s) "
+                "por não aparecerem nos syncs dos últimos 7 dias "
+                "(cancelados ou entregues sem registro formal)."
+            ),
+        )
+    except Exception as e:
+        logger.warning(f"[scheduler] Slack reconciliação: {e}")
+
+
 def start_scheduler():
     """
     Inicia o scheduler com os jobs configurados.
@@ -353,10 +458,19 @@ def start_scheduler():
         name="Alertas Slack + e-mails Unidas (dias úteis)",
     )
 
+    # Reconciliação semanal de contratos órfãos — segunda 08:30 (antes de todos os syncs)
+    scheduler.add_job(
+        job_reconcile_stale,
+        CronTrigger(hour=8, minute=30, day_of_week="mon", timezone=BRA),
+        id="reconcile_stale",
+        replace_existing=True,
+        name="Reconciliação semanal de contratos órfãos",
+    )
+
     scheduler.start()
     logger.info(
         "✅ Scheduler iniciado — "
-        "Sessão 09:45 | Byetech 10:00 | S&D 10:20 | "
+        "Reconciliação seg 08:30 | Sessão 09:45 | Byetech 10:00 | S&D 10:20 | "
         "GWM/LM 10:40 | Metabase 10:45 | Alertas 11:00 (seg-sex)"
     )
     return scheduler
