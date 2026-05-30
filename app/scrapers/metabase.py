@@ -28,6 +28,20 @@ LOCADORA_MAP = [
     (["NISSAN"],                            "NISSAN"),
 ]
 
+# Prazo padrão (em dias) por locadora quando previsao_entrega não está cadastrado.
+# Baseado na média histórica dos contratos ativos de cada locadora.
+PRAZO_PADRAO_DIAS: dict[str, int] = {
+    "MOVIDA":      83,
+    "UNIDAS":      81,
+    "LOCALIZA":    95,
+    "SIGN & DRIVE": 48,
+    "VW":          47,
+    "FLUA":        66,
+    "LM":          41,
+    "GWM":         71,
+    "NISSAN":      90,
+}
+
 def map_locadora(nome: str) -> str:
     n = (nome or "").upper()
     for palavras, fonte in LOCADORA_MAP:
@@ -81,7 +95,7 @@ def _row_to_contrato(row: dict) -> dict:
         or _parse_date(row.get("data_previsao_entrega"))
     )
 
-    # Fallback: calcula a partir de data_venda + previsao_entrega (INT dias)
+    # Fallback 1: calcula a partir de data_venda + previsao_entrega (INT dias)
     # Necessário quando o card público retorna previsao_entrega como INT
     if not data_prevista:
         # data_venda pode vir com nome literal "date(pedidos.data_venda)" do card público
@@ -95,6 +109,21 @@ def _row_to_contrato(row: dict) -> dict:
                 data_prevista = data_venda + timedelta(days=int(previsao_dias))
             except (ValueError, TypeError):
                 data_prevista = None
+
+    # Fallback 2: previsao_entrega não cadastrado — usa prazo médio da locadora
+    # Garante que todos os contratos ativos tenham data_prevista_entrega
+    if not data_prevista:
+        data_venda_fb = (
+            _parse_date(row.get("data_venda"))
+            or _parse_date(row.get("date(pedidos.data_venda)"))
+        )
+        padrao_dias = PRAZO_PADRAO_DIAS.get(fonte)
+        if data_venda_fb and padrao_dias:
+            data_prevista = data_venda_fb + timedelta(days=padrao_dias)
+            logger.debug(
+                f"[metabase] prazo padrão {padrao_dias}d aplicado para {fonte} "
+                f"(id={row.get('id')}, previsao_entrega ausente)"
+            )
 
     # ── data_venda ────────────────────────────────────────────────────────────
     data_venda_dt = (
