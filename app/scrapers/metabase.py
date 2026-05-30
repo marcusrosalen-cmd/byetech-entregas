@@ -146,6 +146,7 @@ def _row_to_contrato(row: dict) -> dict:
         "data_entrega_definitiva":  _parse_date(row.get("data_entrega_definitivo")),
         "data_venda":               data_venda_dt,
         "pedido_id_locadora":       row.get("pedido_id") or row.get("id"),
+        "vendedor":                 str(row.get("usuario_atribuido") or "").strip(),
     }
 
 

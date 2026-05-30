@@ -25,55 +25,19 @@
 
     /* ── Topbar ── */
     .topbar {
-      background: var(--card);
-      border-bottom: 1px solid var(--border);
-      padding: 0 24px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      position: sticky;
-      top: 0;
-      z-index: 100;
-      height: 60px;
+      background: var(--card); border-bottom: 1px solid var(--border);
+      padding: 0 24px; display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: 0; z-index: 100; height: 60px;
       box-shadow: 0 2px 16px rgba(0,0,0,.4);
     }
-    .topbar-logo {
-      display: flex; align-items: center; gap: 10px;
-      font-size: 16px; font-weight: 700; color: var(--text);
-      text-decoration: none;
-    }
-    .topbar-logo-mark {
-      width: 32px; height: 32px;
-      background: linear-gradient(135deg, var(--accent), #00CCCC);
-      border-radius: 8px;
-      display: flex; align-items: center; justify-content: center;
-      font-weight: 900; font-size: 1rem; color: #001820;
-      box-shadow: 0 0 10px rgba(0,255,255,.3);
-    }
+    .topbar-logo { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 700; color: var(--text); text-decoration: none; }
+    .topbar-logo-mark { width: 32px; height: 32px; background: linear-gradient(135deg, var(--accent), #00CCCC); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 1rem; color: #001820; box-shadow: 0 0 10px rgba(0,255,255,.3); }
     .topbar-nav { display: flex; gap: 2px; align-items: center; }
-    .topbar-nav a {
-      color: var(--muted);
-      text-decoration: none;
-      padding: 5px 11px;
-      border-radius: 6px;
-      font-size: 13px;
-      font-weight: 500;
-      transition: color .15s, background .15s;
-      white-space: nowrap;
-    }
+    .topbar-nav a { color: var(--muted); text-decoration: none; padding: 5px 11px; border-radius: 6px; font-size: 13px; font-weight: 500; transition: color .15s, background .15s; white-space: nowrap; }
     .topbar-nav a:hover { color: var(--text); background: rgba(0,255,255,.07); }
     .topbar-nav a.active { color: var(--accent); font-weight: 700; background: rgba(0,255,255,.1); }
     .topbar-right { display: flex; align-items: center; gap: 12px; }
-    .btn-refresh {
-      background: var(--accent);
-      color: #001820;
-      border: none;
-      border-radius: 8px;
-      padding: 7px 16px;
-      font-size: 13px;
-      cursor: pointer;
-      font-weight: 700;
-    }
+    .btn-refresh { background: var(--accent); color: #001820; border: none; border-radius: 8px; padding: 7px 16px; font-size: 13px; cursor: pointer; font-weight: 700; }
     .btn-refresh:hover { opacity: 0.88; }
     #last-updated { font-size: 12px; color: var(--muted); }
 
@@ -81,30 +45,14 @@
     .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
 
     /* ── KPIs ── */
-    .kpi-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 16px;
-      margin-bottom: 28px;
-    }
-    .kpi-card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 20px 16px;
-      text-align: center;
-    }
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 28px; }
+    .kpi-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px 16px; text-align: center; }
     .kpi-card.red    { border-color: var(--red);    background: rgba(255,90,90,.08);  }
     .kpi-card.orange { border-color: var(--orange); background: rgba(249,115,22,.08); }
     .kpi-card.yellow { border-color: var(--yellow); background: rgba(255,179,64,.08); }
     .kpi-card.green  { border-color: var(--green);  background: rgba(0,229,160,.08);  }
     .kpi-card.purple { border-color: var(--accent); background: rgba(0,255,255,.08);  }
-    .kpi-num {
-      font-size: 36px;
-      font-weight: 800;
-      line-height: 1;
-      margin-bottom: 6px;
-    }
+    .kpi-num { font-size: 36px; font-weight: 800; line-height: 1; margin-bottom: 6px; }
     .kpi-card.red    .kpi-num { color: var(--red);    }
     .kpi-card.orange .kpi-num { color: var(--orange); }
     .kpi-card.yellow .kpi-num { color: var(--yellow); }
@@ -113,94 +61,76 @@
     .kpi-label { font-size: 12px; color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: .5px; }
     .kpi-sub   { font-size: 11px; color: var(--muted); margin-top: 4px; }
 
-    /* ── Charts grid ── */
-    .charts-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 20px;
-      margin-bottom: 24px;
-    }
-    .charts-grid-3 {
-      display: grid;
-      grid-template-columns: 2fr 1fr;
-      gap: 20px;
-      margin-bottom: 24px;
-    }
-    @media (max-width: 900px) {
-      .charts-grid, .charts-grid-3 { grid-template-columns: 1fr; }
-    }
+    /* ── Grids ── */
+    .charts-grid   { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
+    .charts-grid-3 { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; margin-bottom: 24px; }
+    .charts-grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 20px; margin-bottom: 24px; }
+    @media (max-width: 1100px) { .charts-grid-4 { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 900px)  { .charts-grid, .charts-grid-3, .charts-grid-4 { grid-template-columns: 1fr; } }
 
     /* ── Chart cards ── */
-    .chart-card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 20px;
-    }
-    .chart-card h3 {
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: .5px;
-      margin-bottom: 16px;
-    }
+    .chart-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    .chart-card h3 { font-size: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 16px; }
     .chart-wrap { position: relative; height: 240px; }
     .chart-wrap.tall { height: 300px; }
+    .chart-wrap.xtall { height: 360px; }
 
     /* ── Tabela críticos ── */
-    .table-card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 20px;
-      margin-bottom: 24px;
-    }
-    .table-card h3 {
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: .5px;
-      margin-bottom: 16px;
-    }
+    .table-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 24px; }
+    .table-card h3 { font-size: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 16px; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th {
-      text-align: left;
-      padding: 8px 12px;
-      color: var(--muted);
-      border-bottom: 1px solid var(--border);
-      font-weight: 500;
-      font-size: 12px;
-      text-transform: uppercase;
-    }
+    th { text-align: left; padding: 8px 12px; color: var(--muted); border-bottom: 1px solid var(--border); font-weight: 500; font-size: 12px; text-transform: uppercase; }
     td { padding: 10px 12px; border-bottom: 1px solid rgba(45,48,72,.5); }
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: rgba(108,99,255,.05); }
-    .badge {
-      display: inline-block;
-      padding: 3px 8px;
-      border-radius: 99px;
-      font-size: 11px;
-      font-weight: 600;
-    }
+    .badge { display: inline-block; padding: 3px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
     .badge-red    { background: rgba(239,68,68,.15);  color: var(--red);    }
     .badge-orange { background: rgba(249,115,22,.15); color: var(--orange); }
     .badge-blue   { background: rgba(108,99,255,.15); color: #a78bfa; }
     .dias-atraso  { color: var(--red); font-weight: 700; }
 
+    /* ── Divider + section ── */
+    .section-title {
+      font-size: 18px; font-weight: 700; color: var(--accent);
+      margin: 36px 0 20px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .section-title::after {
+      content: ''; flex: 1; height: 1px; background: var(--border);
+    }
+
+    /* ── Date filter ── */
+    .filter-bar {
+      background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+      padding: 16px 20px; margin-bottom: 24px;
+      display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    }
+    .filter-bar label { font-size: 12px; color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: .4px; }
+    .filter-bar input[type="date"] {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text); padding: 6px 12px; font-size: 13px; font-family: inherit;
+      cursor: pointer;
+    }
+    .filter-bar input[type="date"]:focus { outline: none; border-color: var(--accent); }
+    .btn-filter {
+      background: var(--accent); color: #001820; border: none; border-radius: 8px;
+      padding: 7px 18px; font-size: 13px; cursor: pointer; font-weight: 700;
+    }
+    .btn-filter:hover { opacity: .88; }
+    .filter-shortcuts { display: flex; gap: 6px; flex-wrap: wrap; }
+    .btn-shortcut {
+      background: none; border: 1px solid var(--border); color: var(--muted);
+      border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+      font-family: inherit; transition: all .15s;
+    }
+    .btn-shortcut:hover, .btn-shortcut.active { border-color: var(--accent); color: var(--accent); background: rgba(0,255,255,.06); }
+    .filter-result { font-size: 12px; color: var(--muted); margin-left: auto; }
+
     /* ── Loading ── */
     .loading { text-align: center; padding: 60px; color: var(--muted); font-size: 18px; }
-    .spinner {
-      display: inline-block;
-      width: 32px; height: 32px;
-      border: 3px solid rgba(108,99,255,.3);
-      border-top-color: var(--accent);
-      border-radius: 50%;
-      animation: spin .8s linear infinite;
-      margin-bottom: 12px;
-    }
+    .spinner { display: inline-block; width: 32px; height: 32px; border: 3px solid rgba(108,99,255,.3); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; margin-bottom: 12px; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    .analytics-loading { text-align: center; padding: 40px; color: var(--muted); font-size: 14px; }
   </style>
 </head>
 <body>
@@ -217,114 +147,118 @@
   </nav>
   <div class="topbar-right">
     <span id="last-updated">—</span>
-    <button class="btn-refresh" onclick="loadData()">↻ Atualizar</button>
+    <button class="btn-refresh" onclick="loadAll()">↻ Atualizar</button>
     <button onclick="doLogout()" style="background:none;border:1px solid var(--muted,#8AABA0);color:var(--muted,#8AABA0);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;font-family:inherit" title="Sair da sessão">⏻ Sair</button>
   </div>
 </div>
 
-<div class="container" id="app">
-  <div class="loading">
-    <div class="spinner"></div><br/>Carregando dados...
+<div class="container">
+  <!-- Carteira atual (sem filtro) -->
+  <div id="app">
+    <div class="loading"><div class="spinner"></div><br/>Carregando dados...</div>
+  </div>
+
+  <!-- Análise de Performance (com filtro de data) -->
+  <div class="section-title">📈 Análise de Performance</div>
+
+  <div class="filter-bar">
+    <label>De</label>
+    <input type="date" id="dt-inicio" />
+    <label>Até</label>
+    <input type="date" id="dt-fim" />
+    <div class="filter-shortcuts">
+      <button class="btn-shortcut" onclick="setShortcut(30)">30 dias</button>
+      <button class="btn-shortcut active" onclick="setShortcut(90)">3 meses</button>
+      <button class="btn-shortcut" onclick="setShortcut(180)">6 meses</button>
+      <button class="btn-shortcut" onclick="setShortcut(365)">1 ano</button>
+    </div>
+    <button class="btn-filter" onclick="loadAnalytics()">Aplicar</button>
+    <span class="filter-result" id="filter-result"></span>
+  </div>
+
+  <div id="analytics-section">
+    <div class="analytics-loading">Carregando análise...</div>
   </div>
 </div>
 
 <script>
 const FONTE_COLOR = {
-  'GWM':         '#6c63ff',
-  'SIGN & DRIVE':'#22c55e',
-  'LM':          '#06b6d4',
-  'LOCALIZA':    '#eab308',
-  'MOVIDA':      '#3b82f6',
-  'UNIDAS':      '#a855f7',
-  'VW':          '#f97316',
-  'FLUA':        '#f43f5e',
-  'NISSAN':      '#64748b',
+  'GWM':'#6c63ff','SIGN & DRIVE':'#22c55e','LM':'#06b6d4',
+  'LOCALIZA':'#eab308','MOVIDA':'#3b82f6','UNIDAS':'#a855f7',
+  'VW':'#f97316','FLUA':'#f43f5e','NISSAN':'#64748b',
 };
+const PALETTE = [
+  '#6c63ff','#22c55e','#06b6d4','#f97316','#eab308','#a855f7',
+  '#f43f5e','#3b82f6','#64748b','#10b981','#ec4899','#84cc16',
+  '#e11d48','#0891b2','#7c3aed',
+];
 
 let _charts = {};
+let _analyticsCharts = {};
+let _activeShortcut = 90;
 
-function destroyCharts() {
-  Object.values(_charts).forEach(c => c.destroy());
-  _charts = {};
+function destroyCharts(obj) { Object.values(obj).forEach(c => c.destroy()); }
+function fmt(n) { return n == null ? '—' : n.toLocaleString('pt-BR'); }
+function fmtDias(d) { return d == null ? '—' : `${fmt(d)}d`; }
+
+// ── Date helpers ──────────────────────────────────────────
+function isoDate(d) { return d.toISOString().split('T')[0]; }
+function initDates(daysBack) {
+  const fim = new Date();
+  const ini = new Date(); ini.setDate(ini.getDate() - daysBack);
+  document.getElementById('dt-inicio').value = isoDate(ini);
+  document.getElementById('dt-fim').value    = isoDate(fim);
+}
+function setShortcut(days) {
+  _activeShortcut = days;
+  document.querySelectorAll('.btn-shortcut').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  initDates(days);
+  loadAnalytics();
 }
 
-function fmt(n) { return n == null ? '—' : n.toLocaleString('pt-BR'); }
+// ── Chart options factory ──────────────────────────────────
+const cOpts = (extra = {}) => ({
+  responsive: true, maintainAspectRatio: false,
+  plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } },
+  scales: {
+    x: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: '#0d2535' } },
+    y: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: '#0d2535' } },
+  },
+  ...extra,
+});
 
+// ══════════════════════════════════════════════════════════
+// CARTEIRA ATUAL
+// ══════════════════════════════════════════════════════════
 function renderKpis(k) {
   const perc = k.perc_atrasados;
   return `
   <div class="kpi-grid">
-    <div class="kpi-card purple">
-      <div class="kpi-num">${fmt(k.total_ativos)}</div>
-      <div class="kpi-label">Contratos Ativos</div>
-    </div>
-    <div class="kpi-card red">
-      <div class="kpi-num">${fmt(k.atrasados)}</div>
-      <div class="kpi-label">Atrasados</div>
-      <div class="kpi-sub">${perc}% da carteira</div>
-    </div>
-    <div class="kpi-card orange">
-      <div class="kpi-num">${fmt(k.urgentes)}</div>
-      <div class="kpi-label">Urgentes (1-2d)</div>
-    </div>
-    <div class="kpi-card orange" style="border-color:#f97316;background:rgba(249,115,22,.06)">
-      <div class="kpi-num" style="color:#f97316">${fmt(k.criticos)}</div>
-      <div class="kpi-label">Críticos (3-10d)</div>
-    </div>
-    <div class="kpi-card yellow">
-      <div class="kpi-num">${fmt(k.alertas)}</div>
-      <div class="kpi-label">Alertas (11-20d)</div>
-    </div>
-    <div class="kpi-card green">
-      <div class="kpi-num">${fmt(k.ok)}</div>
-      <div class="kpi-label">Em dia (>20d)</div>
-    </div>
-    <div class="kpi-card green" style="border-color:#0ea5e9;background:rgba(14,165,233,.06)">
-      <div class="kpi-num" style="color:#0ea5e9">${fmt(k.entregas_semana)}</div>
-      <div class="kpi-label">Entregues Semana</div>
-      <div class="kpi-sub">${fmt(k.entregas_mes)} no mês</div>
-    </div>
-    <div class="kpi-card" style="border-color:#10b981;background:rgba(16,185,129,.06)">
-      <div class="kpi-num" style="color:#10b981">${fmt(k.novas_vendas_8sem)}</div>
-      <div class="kpi-label">Novas Vendas 8sem</div>
-    </div>
+    <div class="kpi-card purple"><div class="kpi-num">${fmt(k.total_ativos)}</div><div class="kpi-label">Contratos Ativos</div></div>
+    <div class="kpi-card red"><div class="kpi-num">${fmt(k.atrasados)}</div><div class="kpi-label">Atrasados</div><div class="kpi-sub">${perc}% da carteira</div></div>
+    <div class="kpi-card orange"><div class="kpi-num">${fmt(k.urgentes)}</div><div class="kpi-label">Urgentes (1-2d)</div></div>
+    <div class="kpi-card orange" style="border-color:#f97316;background:rgba(249,115,22,.06)"><div class="kpi-num" style="color:#f97316">${fmt(k.criticos)}</div><div class="kpi-label">Críticos (3-10d)</div></div>
+    <div class="kpi-card yellow"><div class="kpi-num">${fmt(k.alertas)}</div><div class="kpi-label">Alertas (11-20d)</div></div>
+    <div class="kpi-card green"><div class="kpi-num">${fmt(k.ok)}</div><div class="kpi-label">Em dia (>20d)</div></div>
+    <div class="kpi-card green" style="border-color:#0ea5e9;background:rgba(14,165,233,.06)"><div class="kpi-num" style="color:#0ea5e9">${fmt(k.entregas_semana)}</div><div class="kpi-label">Entregues Semana</div><div class="kpi-sub">${fmt(k.entregas_mes)} no mês</div></div>
+    <div class="kpi-card" style="border-color:#10b981;background:rgba(16,185,129,.06)"><div class="kpi-num" style="color:#10b981">${fmt(k.novas_vendas_8sem)}</div><div class="kpi-label">Novas Vendas 8sem</div></div>
   </div>`;
 }
 
-function renderCharts(d) {
-  const fontes = d.por_fonte.map(f => f.fonte);
-  const fonteColors = fontes.map(f => FONTE_COLOR[f] || '#94a3b8');
-
+function renderCarteiraCharts() {
   return `
   <div class="charts-grid">
-    <div class="chart-card">
-      <h3>Ativos por Locadora</h3>
-      <div class="chart-wrap"><canvas id="chartFonte"></canvas></div>
-    </div>
-    <div class="chart-card">
-      <h3>Distribuição por Status</h3>
-      <div class="chart-wrap"><canvas id="chartStatus"></canvas></div>
-    </div>
+    <div class="chart-card"><h3>Ativos por Locadora</h3><div class="chart-wrap"><canvas id="chartFonte"></canvas></div></div>
+    <div class="chart-card"><h3>Distribuição por Status</h3><div class="chart-wrap"><canvas id="chartStatus"></canvas></div></div>
   </div>
   <div class="charts-grid">
-    <div class="chart-card">
-      <h3>Entregas por Semana (8 sem)</h3>
-      <div class="chart-wrap"><canvas id="chartEntregas"></canvas></div>
-    </div>
-    <div class="chart-card">
-      <h3>Novas Vendas por Semana (8 sem)</h3>
-      <div class="chart-wrap"><canvas id="chartVendas"></canvas></div>
-    </div>
+    <div class="chart-card"><h3>Entregas por Semana (8 sem)</h3><div class="chart-wrap"><canvas id="chartEntregas"></canvas></div></div>
+    <div class="chart-card"><h3>Novas Vendas por Semana (8 sem)</h3><div class="chart-wrap"><canvas id="chartVendas"></canvas></div></div>
   </div>
   <div class="charts-grid-3">
-    <div class="chart-card">
-      <h3>Atrasados x Entregues — por Locadora</h3>
-      <div class="chart-wrap tall"><canvas id="chartComparativo"></canvas></div>
-    </div>
-    <div class="chart-card">
-      <h3>Urgência da Carteira</h3>
-      <div class="chart-wrap tall"><canvas id="chartUrgencia"></canvas></div>
-    </div>
+    <div class="chart-card"><h3>Atrasados x Entregues — por Locadora</h3><div class="chart-wrap tall"><canvas id="chartComparativo"></canvas></div></div>
+    <div class="chart-card"><h3>Urgência da Carteira</h3><div class="chart-wrap tall"><canvas id="chartUrgencia"></canvas></div></div>
   </div>`;
 }
 
@@ -342,99 +276,56 @@ function renderTabela(top) {
     </tr>`;
   }).join('');
   return `<table>
-    <thead><tr>
-      <th>Cliente</th><th>Locadora</th><th>Veículo</th>
-      <th>Status</th><th>Prev. Entrega</th><th>Atraso</th>
-    </tr></thead>
+    <thead><tr><th>Cliente</th><th>Locadora</th><th>Veículo</th><th>Status</th><th>Prev. Entrega</th><th>Atraso</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
 }
 
-function initCharts(d, k) {
+function initCarteiraCharts(d, k) {
   const fontes = d.por_fonte.map(f => f.fonte);
   const fonteColors = fontes.map(f => FONTE_COLOR[f] || '#94a3b8');
-  const cOpts = { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } }, scales: { x: { ticks: { color: '#64748b', font:{size:11} }, grid: { color: '#1e2234' } }, y: { ticks: { color: '#64748b', font:{size:11} }, grid: { color: '#1e2234' } } } };
 
-  // Ativos por fonte (horizontal bar)
+  destroyCharts(_charts); _charts = {};
+
   _charts.fonte = new Chart(document.getElementById('chartFonte'), {
     type: 'bar',
-    data: {
-      labels: fontes,
-      datasets: [{
-        label: 'Ativos',
-        data: d.por_fonte.map(f => f.ativos),
-        backgroundColor: fonteColors.map(c => c + 'cc'),
-        borderColor: fonteColors,
-        borderWidth: 1,
-        borderRadius: 4,
-      }]
-    },
-    options: { ...cOpts, indexAxis: 'y', plugins: { legend: { display: false } } }
+    data: { labels: fontes, datasets: [{ label: 'Ativos', data: d.por_fonte.map(f => f.ativos), backgroundColor: fonteColors.map(c => c + 'cc'), borderColor: fonteColors, borderWidth: 1, borderRadius: 4 }] },
+    options: { ...cOpts(), indexAxis: 'y', plugins: { legend: { display: false } } }
   });
 
-  // Por status (doughnut)
   const statusColors = ['#6c63ff','#22c55e','#3b82f6','#f97316','#eab308','#ef4444','#a855f7','#06b6d4','#f43f5e','#64748b'];
   _charts.status = new Chart(document.getElementById('chartStatus'), {
     type: 'doughnut',
-    data: {
-      labels: d.por_status.map(s => s.status),
-      datasets: [{ data: d.por_status.map(s => s.total), backgroundColor: statusColors, borderWidth: 0, hoverOffset: 4 }]
-    },
-    options: { responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { position: 'right', labels: { color: '#94a3b8', font: { size: 10 }, padding: 10, boxWidth: 12 } } } }
+    data: { labels: d.por_status.map(s => s.status), datasets: [{ data: d.por_status.map(s => s.total), backgroundColor: statusColors, borderWidth: 0, hoverOffset: 4 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#94a3b8', font: { size: 10 }, padding: 10, boxWidth: 12 } } } }
   });
 
-  // Entregas por semana (line)
   _charts.entregas = new Chart(document.getElementById('chartEntregas'), {
     type: 'line',
-    data: {
-      labels: d.semanas_labels,
-      datasets: [{ label: 'Entregas', data: d.entregas_por_semana,
-        borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,.1)',
-        fill: true, tension: 0.3, pointBackgroundColor: '#22c55e', pointRadius: 4 }]
-    },
-    options: { ...cOpts, plugins: { legend: { display: false } } }
+    data: { labels: d.semanas_labels, datasets: [{ label: 'Entregas', data: d.entregas_por_semana, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,.1)', fill: true, tension: 0.3, pointBackgroundColor: '#22c55e', pointRadius: 4 }] },
+    options: { ...cOpts(), plugins: { legend: { display: false } } }
   });
 
-  // Vendas por semana (bar)
   _charts.vendas = new Chart(document.getElementById('chartVendas'), {
     type: 'bar',
-    data: {
-      labels: d.semanas_labels,
-      datasets: [{ label: 'Novas Vendas', data: d.vendas_por_semana,
-        backgroundColor: 'rgba(108,99,255,.7)', borderColor: '#6c63ff',
-        borderWidth: 1, borderRadius: 4 }]
-    },
-    options: { ...cOpts, plugins: { legend: { display: false } } }
+    data: { labels: d.semanas_labels, datasets: [{ label: 'Novas Vendas', data: d.vendas_por_semana, backgroundColor: 'rgba(108,99,255,.7)', borderColor: '#6c63ff', borderWidth: 1, borderRadius: 4 }] },
+    options: { ...cOpts(), plugins: { legend: { display: false } } }
   });
 
-  // Comparativo atrasados x entregues por fonte (grouped bar)
   _charts.comp = new Chart(document.getElementById('chartComparativo'), {
     type: 'bar',
-    data: {
-      labels: fontes,
-      datasets: [
-        { label: 'Ativos', data: d.por_fonte.map(f => f.ativos), backgroundColor: 'rgba(108,99,255,.6)', borderRadius: 4 },
-        { label: 'Entregues (8sem)', data: d.por_fonte.map(f => f.entregues), backgroundColor: 'rgba(34,197,94,.6)', borderRadius: 4 },
-        { label: 'Atrasados', data: d.por_fonte.map(f => f.atrasados), backgroundColor: 'rgba(239,68,68,.6)', borderRadius: 4 },
-      ]
-    },
-    options: { ...cOpts, plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } } }
+    data: { labels: fontes, datasets: [
+      { label: 'Ativos',          data: d.por_fonte.map(f => f.ativos),    backgroundColor: 'rgba(108,99,255,.6)', borderRadius: 4 },
+      { label: 'Entregues (8sem)',data: d.por_fonte.map(f => f.entregues), backgroundColor: 'rgba(34,197,94,.6)',  borderRadius: 4 },
+      { label: 'Atrasados',       data: d.por_fonte.map(f => f.atrasados), backgroundColor: 'rgba(239,68,68,.6)',  borderRadius: 4 },
+    ]},
+    options: cOpts()
   });
 
-  // Urgência da carteira (pie)
   _charts.urg = new Chart(document.getElementById('chartUrgencia'), {
     type: 'pie',
-    data: {
-      labels: ['Atrasados', 'Urgentes(1-2d)', 'Críticos(3-10d)', 'Alertas(11-20d)', 'Em dia'],
-      datasets: [{
-        data: [k.atrasados, k.urgentes, k.criticos, k.alertas, k.ok],
-        backgroundColor: ['#ef4444','#f97316','#f59e0b','#eab308','#22c55e'],
-        borderWidth: 0, hoverOffset: 6
-      }]
-    },
-    options: { responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', font: { size: 10 }, padding: 8, boxWidth: 12 } } } }
+    data: { labels: ['Atrasados','Urgentes(1-2d)','Críticos(3-10d)','Alertas(11-20d)','Em dia'], datasets: [{ data: [k.atrasados, k.urgentes, k.criticos, k.alertas, k.ok], backgroundColor: ['#ef4444','#f97316','#f59e0b','#eab308','#22c55e'], borderWidth: 0, hoverOffset: 6 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', font: { size: 10 }, padding: 8, boxWidth: 12 } } } }
   });
 }
 
@@ -446,32 +337,160 @@ async function loadData() {
     const d = await res.json();
     const k = d.kpis;
 
-    destroyCharts();
-
     app.innerHTML = `
       ${renderKpis(k)}
-      ${renderCharts(d)}
+      ${renderCarteiraCharts()}
       <div class="table-card">
-        <h3>Top Atrasados — Acao Imediata</h3>
+        <h3>Top Atrasados — Ação Imediata</h3>
         ${renderTabela(d.top_atrasados)}
       </div>
     `;
 
-    setTimeout(() => initCharts(d, k), 50);
-
+    setTimeout(() => initCarteiraCharts(d, k), 50);
     const dt = new Date(d.gerado_em);
-    document.getElementById('last-updated').textContent =
-      'Atualizado: ' + dt.toLocaleTimeString('pt-BR');
-
+    document.getElementById('last-updated').textContent = 'Atualizado: ' + dt.toLocaleTimeString('pt-BR');
   } catch(e) {
     app.innerHTML = `<div class="loading" style="color:var(--red)">Erro ao carregar dados: ${e.message}</div>`;
   }
 }
 
+// ══════════════════════════════════════════════════════════
+// ANALYTICS
+// ══════════════════════════════════════════════════════════
+function renderAnalytics(d) {
+  const nEnt = d.total_entregues;
+
+  // ── helpers ──────────────────────────────────────────────
+  function barHoriz(id, items, valueKey, labelFn, colorFn) {
+    const labels = items.map(labelFn);
+    const vals   = items.map(i => i[valueKey]);
+    const colors = labels.map((_, i) => PALETTE[i % PALETTE.length]);
+    return new Chart(document.getElementById(id), {
+      type: 'bar',
+      data: { labels, datasets: [{ data: vals, backgroundColor: colors.map(c => c + 'bb'), borderColor: colors, borderWidth: 1, borderRadius: 4 }] },
+      options: { ...cOpts({ indexAxis: 'y' }), plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.x}d (${items[ctx.dataIndex].total || ''} entregas)` } } } }
+    });
+  }
+
+  // ── HTML ─────────────────────────────────────────────────
+  const sec = document.getElementById('analytics-section');
+  sec.innerHTML = `
+    <!-- Entregas por semana (filtrado) -->
+    <div class="charts-grid" style="margin-bottom:24px">
+      <div class="chart-card" style="grid-column:1/-1">
+        <h3>Entregas por Semana — ${nEnt} entregas no período</h3>
+        <div class="chart-wrap"><canvas id="aChartSemanas"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Tempo médio de entrega -->
+    <div class="charts-grid-4">
+      <div class="chart-card">
+        <h3>Tempo Médio — Locadora</h3>
+        <div class="chart-wrap xtall"><canvas id="aChartLocadora"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>Tempo Médio — Montadora</h3>
+        <div class="chart-wrap xtall"><canvas id="aChartMontadora"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>Tempo Médio — Vendedor</h3>
+        <div class="chart-wrap xtall"><canvas id="aChartVendedor"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>Tempo Médio — Modelo (top 15)</h3>
+        <div class="chart-wrap xtall"><canvas id="aChartModelo"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Taxa de atraso por locadora -->
+    <div class="charts-grid" style="margin-bottom:40px">
+      <div class="chart-card">
+        <h3>Taxa de Atraso por Locadora (%)</h3>
+        <div class="chart-wrap tall"><canvas id="aChartTaxaAtraso"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>Tempo Médio de Atraso por Locadora (dias)</h3>
+        <div class="chart-wrap tall"><canvas id="aChartDiasAtraso"></canvas></div>
+      </div>
+    </div>
+  `;
+
+  destroyCharts(_analyticsCharts); _analyticsCharts = {};
+
+  // Entregas por semana (linha)
+  _analyticsCharts.semanas = new Chart(document.getElementById('aChartSemanas'), {
+    type: 'bar',
+    data: { labels: d.semanas_labels, datasets: [{ label: 'Entregas', data: d.entregas_por_semana, backgroundColor: 'rgba(0,229,160,.6)', borderColor: '#00E5A0', borderWidth: 1, borderRadius: 4 }] },
+    options: { ...cOpts(), plugins: { legend: { display: false } } }
+  });
+
+  // Tempo médio — locadora
+  const tLoc = d.tempo_por_locadora;
+  _analyticsCharts.locadora = barHoriz('aChartLocadora', tLoc, 'media_dias',
+    i => i.grupo, i => FONTE_COLOR[i.grupo] || '#94a3b8');
+
+  // Tempo médio — montadora
+  _analyticsCharts.montadora = barHoriz('aChartMontadora', d.tempo_por_montadora, 'media_dias', i => i.grupo, () => '#06b6d4');
+
+  // Tempo médio — vendedor
+  _analyticsCharts.vendedor = barHoriz('aChartVendedor', d.tempo_por_vendedor, 'media_dias', i => i.grupo, () => '#a855f7');
+
+  // Tempo médio — modelo
+  _analyticsCharts.modelo = barHoriz('aChartModelo', d.tempo_por_modelo, 'media_dias', i => i.grupo, () => '#f97316');
+
+  // Taxa de atraso por locadora
+  const taxaFontes = d.taxa_atraso.map(t => t.fonte);
+  const taxaColors = taxaFontes.map(f => FONTE_COLOR[f] || '#94a3b8');
+  _analyticsCharts.taxa = new Chart(document.getElementById('aChartTaxaAtraso'), {
+    type: 'bar',
+    data: { labels: taxaFontes, datasets: [{ label: '% Atrasados', data: d.taxa_atraso.map(t => t.taxa_perc), backgroundColor: taxaColors.map(c => c + 'bb'), borderColor: taxaColors, borderWidth: 1, borderRadius: 4 }] },
+    options: { ...cOpts(), plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y}% (${d.taxa_atraso[ctx.dataIndex].atrasados}/${d.taxa_atraso[ctx.dataIndex].total})` } } } }
+  });
+
+  // Tempo médio de atraso por locadora
+  _analyticsCharts.diasAtraso = new Chart(document.getElementById('aChartDiasAtraso'), {
+    type: 'bar',
+    data: { labels: taxaFontes, datasets: [{ label: 'Dias de Atraso', data: d.taxa_atraso.map(t => t.media_dias_atraso), backgroundColor: 'rgba(255,90,90,.5)', borderColor: '#FF5A5A', borderWidth: 1, borderRadius: 4 }] },
+    options: { ...cOpts(), plugins: { legend: { display: false } } }
+  });
+
+  document.getElementById('filter-result').textContent =
+    `${nEnt} entregas • ${d.filtro.data_inicio} → ${d.filtro.data_fim}`;
+}
+
+async function loadAnalytics() {
+  const sec = document.getElementById('analytics-section');
+  sec.innerHTML = '<div class="analytics-loading"><div class="spinner" style="width:20px;height:20px;border-width:2px;display:inline-block"></div> Carregando análise...</div>';
+
+  const ini = document.getElementById('dt-inicio').value;
+  const fim = document.getElementById('dt-fim').value;
+  const params = new URLSearchParams();
+  if (ini) params.set('data_inicio', ini);
+  if (fim) params.set('data_fim', fim);
+
+  try {
+    const res = await fetch('/api/stats/analytics?' + params.toString());
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const d = await res.json();
+    renderAnalytics(d);
+  } catch(e) {
+    sec.innerHTML = `<div class="analytics-loading" style="color:var(--red)">Erro: ${e.message}</div>`;
+  }
+}
+
+async function loadAll() {
+  await loadData();
+  await loadAnalytics();
+}
+
+// ── Inicialização ─────────────────────────────────────────
+initDates(_activeShortcut);
 loadData();
+loadAnalytics();
 
 // Auto-refresh a cada 5 minutos
-setInterval(loadData, 5 * 60 * 1000);
+setInterval(loadAll, 5 * 60 * 1000);
 
 async function doLogout() {
   try { await fetch('/api/auth/logout', { method: 'POST' }); } catch(_) {}

@@ -118,10 +118,10 @@ async def _upsert_contrato(session: AsyncSession, data: dict, portal_update: boo
             existing.veiculo = data.get("veiculo") or existing.veiculo
             existing.placa = data.get("placa") or existing.placa
             existing.byetech_contrato_id = data.get("byetech_contrato_id") or existing.byetech_contrato_id
+            existing.vendedor = data.get("vendedor") or existing.vendedor
         else:
-            # Portal: só atualiza placa se ainda não temos (campo operacional)
-            if data.get("placa") and not existing.placa:
-                existing.placa = data["placa"]
+            # Portal: atualiza placa se o portal a encontrou (API S&D retorna finalPlate)
+            existing.placa = data.get("placa") or existing.placa
 
         # Calcula dias
         if existing.data_prevista_entrega:
@@ -156,6 +156,7 @@ async def _upsert_contrato(session: AsyncSession, data: dict, portal_update: boo
             pedido_portal_id=str(data["pedido_id_portal"]) if data.get("pedido_id_portal") else None,
             dias_para_entrega=dias,
             atrasado=atrasado,
+            vendedor=data.get("vendedor", ""),
         )
         session.add(novo)
 

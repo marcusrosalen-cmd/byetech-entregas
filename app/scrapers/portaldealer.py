@@ -431,12 +431,21 @@ async def _extract_table_rows(page: Page) -> list[dict]:
                             status = t
                             break
 
+                # Tenta extrair placa do veículo (formato Mercosul: ABC1D23 ou antigo: ABC1234)
+                placa = ""
+                for t in texts:
+                    m = re.search(r'\b([A-Z]{3}[0-9][A-Z0-9][0-9]{2})\b', t.upper())
+                    if m:
+                        placa = m.group(1)
+                        break
+
                 rows.append({
                     "pedido_id": pedido_id,
                     "nome": nome,
                     "cpf": cpf,
                     "status": status,
                     "data_status": data_status,
+                    "placa": placa,
                     "texts": texts,
                 })
             except Exception:
@@ -579,7 +588,8 @@ async def scrape_portaldealer(clientes: list[dict], account_key: str = "GWM") ->
             "byetech_contrato_id": cli.get("byetech_contrato_id", ""),
             "cliente_nome": cli.get("cliente_nome") or cli.get("nome", ""),
             "cliente_cpf_cnpj": cli.get("cliente_cpf_cnpj") or cli.get("cpf_cnpj", ""),
-            "placa": cli.get("placa", ""),
+            # Prefere placa do portal (extraída da tabela) sobre a do banco
+            "placa": order.get("placa") or cli.get("placa", ""),
             "veiculo": cli.get("veiculo", ""),
             "status_atual": status_portal,
             "data_status_portal": data_status,

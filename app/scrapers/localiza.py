@@ -255,6 +255,16 @@ async def scrape_localiza(clientes: list[dict]) -> list[dict]:
 
                 historico = await _get_historico_ativacao(page, account_href)
 
+                # Tenta extrair placa da página do cliente (formato Mercosul: ABC1D23 ou antigo: ABC1234)
+                placa = ""
+                try:
+                    body_text = await page.inner_text("body")
+                    plate_match = re.search(r'\b([A-Z]{3}[0-9][A-Z0-9][0-9]{2})\b', body_text.upper())
+                    if plate_match:
+                        placa = plate_match.group(1)
+                except Exception:
+                    pass
+
                 if historico:
                     ultimo = historico[0]
                     resultados.append({
@@ -263,6 +273,7 @@ async def scrape_localiza(clientes: list[dict]) -> list[dict]:
                         "cliente_cpf_cnpj": cpf,
                         "cliente_nome": nome,
                         "veiculo": cliente.get("veiculo", ""),
+                        "placa": placa or cliente.get("placa", ""),
                         "byetech_contrato_id": cliente.get("byetech_contrato_id", ""),
                         "status_atual": ultimo.get("status_atual", "Contrato Ativo"),
                         "data_ultima_atualizacao": ultimo.get("data_ativacao"),
@@ -274,6 +285,7 @@ async def scrape_localiza(clientes: list[dict]) -> list[dict]:
                         "cliente_cpf_cnpj": cpf,
                         "cliente_nome": nome,
                         "veiculo": cliente.get("veiculo", ""),
+                        "placa": placa or cliente.get("placa", ""),
                         "byetech_contrato_id": cliente.get("byetech_contrato_id", ""),
                         "status_atual": "Aguardando ativação",
                     })

@@ -2396,6 +2396,197 @@ async def stats_dashboard(db: AsyncSession = Depends(get_db), _auth=Depends(requ
     }
 
 
+# ── Analytics helpers ──────────────────────────────────────
+def _extract_montadora(veiculo: str, fonte: str) -> str:
+    """Infere montadora a partir do nome do veículo ou da fonte."""
+    FONTE_MAP = {"VW": "VOLKSWAGEN", "GWM": "GWM", "NISSAN": "NISSAN"}
+    if fonte in FONTE_MAP:
+        return FONTE_MAP[fonte]
+    if not veiculo:
+        return "Outros"
+    v = veiculo.upper().strip()
+    PREFIXES = [
+        (["ARGO", "BRAVO", "CRONOS", "DOBLO", "DUCATO", "FASTBACK", "FIORINO",
+          "MOBI", "PALIO", "PULSE", "SIENA", "STRADA", "TORO", "UNO", "LINEA",
+          "PUNTO", "500", "TIPO"], "FIAT"),
+        (["GOL", "GOLF", "JETTA", "NIVUS", "POLO", "SAVEIRO", "T-CROSS", "T-ROC",
+          "TAOS", "TIGUAN", "VOYAGE", "VIRTUS", "UP", "FOX", "AMAROK"], "VOLKSWAGEN"),
+        (["CELTA", "COBALT", "CRUZE", "EQUINOX", "MONTANA", "ONIX", "S10",
+          "SPIN", "TRACKER", "TRAILBLAZER", "TRAX", "PRISMA", "CAMARO",
+          "MALIBU", "CAPTIVA"], "CHEVROLET"),
+        (["COROLLA", "ETIOS", "FIELDER", "HILUX", "PRIUS", "RAV4",
+          "SW4", "YARIS", "CAMRY"], "TOYOTA"),
+        (["AZERA", "CRETA", "ELANTRA", "HB20", "HB20S", "I30", "IX35",
+          "SANTA FE", "TUCSON", "IONIQ"], "HYUNDAI"),
+        (["FRONTIER", "KICKS", "LEAF", "MARCH", "SENTRA", "VERSA"], "NISSAN"),
+        (["ACCORD", "CIVIC", "CR-V", "FIT", "HR-V", "WR-V", "CITY"], "HONDA"),
+        (["CAPTUR", "DUSTER", "KARDIAN", "KWID", "LOGAN", "MASTER",
+          "OROCH", "SANDERO", "SYMBOL", "ZOE"], "RENAULT"),
+        (["AVENGER", "CHEROKEE", "COMMANDER", "COMPASS", "GLADIATOR",
+          "MERIDIAN", "RENEGADE", "WRANGLER"], "JEEP"),
+        (["BRONCO", "ECOSPORT", "EDGE", "FIESTA", "FOCUS", "FUSION",
+          "KA", "MAVERICK", "MUSTANG", "RANGER", "TERRITORY"], "FORD"),
+        (["ASX", "ECLIPSE", "L200", "OUTLANDER", "PAJERO"], "MITSUBISHI"),
+        (["TIGGO", "ARRIZO"], "CHERY"),
+        (["H6", "JOLION", "ORA", "POER", "TANK", "HAVAL"], "GWM"),
+        (["C3", "C4", "AIRCROSS", "BERLINGO", "JUMPY"], "CITROËN"),
+        (["208", "2008", "3008", "408", "508", "EXPERT", "RIFTER"], "PEUGEOT"),
+        (["DOLPHIN", "SEAL", "ATTO", "KING", "YUAN", "TANG"], "BYD"),
+        (["FORESTER", "OUTBACK", "XV", "IMPREZA", "LEGACY"], "SUBARU"),
+    ]
+    for models, brand in PREFIXES:
+        if any(v.startswith(m) for m in models):
+            return brand
+    return "Outros"
+
+
+def _get_modelo(veiculo: str) -> str:
+    """Extrai o nome do modelo (primeiro token sem números/especificações)."""
+    if not veiculo:
+        return "Outros"
+    parts = veiculo.strip().split()
+    # T-Cross, HB20S, etc. — mantém o primeiro token como modelo
+    return parts[0] if parts else "Outros"
+
+
+@app.get("/api/stats/analytics")
+async def stats_analytics(
+    data_inicio: Optional[str] = None,
+    data_fim: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    _auth=Depends(require_auth),
+):
+    """
+    Analytics de performance para o dashboard.
+    Parâmetros opcionais: data_inicio e data_fim (YYYY-MM-DD).
+    Retorna tempo médio de entrega por locadora/vendedor/montadora/modelo,
+    taxa de atraso por locadora e entregas por semana no período.
+    """
+    from datetime import timedelta
+    from collections import defaultdict
+
+    hoje = datetime.now().date()
+
+    # Parse filtros de data
+    try:
+        dt_inicio = datetime.strptime(data_inicio, "%Y-%m-%d") if data_inicio else datetime(hoje.year - 1, hoje.month, hoje.day)
+    except ValueError:
+        dt_inicio = datetime(hoje.year - 1, hoje.month, hoje.day)
+    try:
+        dt_fim_dt = datetime.strptime(data_fim, "%Y-%m-%d").replace(hour=23, minute=59, second=59) if data_fim else datetime.combine(hoje, datetime.max.time())
+    except ValueError:
+        dt_fim_dt = datetime.combine(hoje, datetime.max.time())
+
+    # Contratos entregues no período
+    res_ent = await db.execute(
+        select(Contrato).where(
+            Contrato.data_entrega_definitiva >= dt_inicio,
+            Contrato.data_entrega_definitiva <= dt_fim_dt,
+        )
+    )
+    entregues = res_ent.scalars().all()
+
+    # Contratos ativos (para taxa de atraso)
+    res_ativos = await db.execute(
+        select(Contrato).where(
+            Contrato.data_entrega_definitiva.is_(None),
+            or_(
+                Contrato.status_atual.is_(None),
+                Contrato.status_atual.notin_(_STATUS_EXCLUIDOS),
+            ),
+        )
+    )
+    ativos = res_ativos.scalars().all()
+
+    def _dias_ciclo(c: Contrato):
+        """Dias entre data_venda e data_entrega_definitiva."""
+        if not c.data_entrega_definitiva or not c.data_venda:
+            return None
+        dt_e = c.data_entrega_definitiva.date() if isinstance(c.data_entrega_definitiva, datetime) else c.data_entrega_definitiva
+        dt_v = c.data_venda.date() if isinstance(c.data_venda, datetime) else c.data_venda
+        d = (dt_e - dt_v).days
+        return d if 1 <= d <= 730 else None  # sanity: 1–730 dias
+
+    def _aggregate(contratos, key_fn):
+        groups: dict[str, list[int]] = defaultdict(list)
+        for c in contratos:
+            dias = _dias_ciclo(c)
+            if dias is not None:
+                k = key_fn(c) or "—"
+                groups[k].append(dias)
+        return sorted(
+            [{"grupo": k, "media_dias": round(sum(v) / len(v), 1), "total": len(v)}
+             for k, v in groups.items()],
+            key=lambda x: -x["total"],
+        )
+
+    tempo_locadora  = _aggregate(entregues, lambda c: c.fonte or "")
+    tempo_vendedor  = _aggregate(entregues, lambda c: c.vendedor or "—")
+    tempo_montadora = _aggregate(entregues, lambda c: _extract_montadora(c.veiculo or "", c.fonte or ""))
+    tempo_modelo    = _aggregate(entregues, lambda c: _get_modelo(c.veiculo or ""))[:15]
+
+    # Taxa e média de atraso por locadora (sobre a carteira ativa)
+    atraso: dict[str, dict] = defaultdict(lambda: {"total": 0, "atrasados": 0, "dias": []})
+    for c in ativos:
+        f = c.fonte or ""
+        atraso[f]["total"] += 1
+        if c.atrasado or (c.dias_para_entrega or 0) < 0:
+            atraso[f]["atrasados"] += 1
+            d = abs(c.dias_para_entrega or 0)
+            if d > 0:
+                atraso[f]["dias"].append(d)
+
+    taxa_atraso = sorted(
+        [
+            {
+                "fonte": f,
+                "total": v["total"],
+                "atrasados": v["atrasados"],
+                "taxa_perc": round(v["atrasados"] / v["total"] * 100, 1) if v["total"] else 0,
+                "media_dias_atraso": round(sum(v["dias"]) / len(v["dias"]), 1) if v["dias"] else 0,
+            }
+            for f, v in atraso.items()
+        ],
+        key=lambda x: -x["taxa_perc"],
+    )
+
+    # Entregas por semana no período
+    sem_ent: dict[str, int] = defaultdict(int)
+    for c in entregues:
+        if not c.data_entrega_definitiva:
+            continue
+        dt = c.data_entrega_definitiva
+        if isinstance(dt, datetime):
+            dt = dt.date()
+        iso = dt.isocalendar()
+        sem_ent[f"{iso.year}-W{iso.week:02d}"] += 1
+
+    n_weeks = min(52, max(8, (dt_fim_dt.date() - dt_inicio.date()).days // 7 + 1))
+    semanas_labels, semanas_valores = [], []
+    from datetime import timedelta as _td
+    for i in range(n_weeks - 1, -1, -1):
+        dia = dt_fim_dt.date() - _td(weeks=i)
+        iso = dia.isocalendar()
+        key = f"{iso.year}-W{iso.week:02d}"
+        semanas_labels.append(f"Sem {iso.week}/{iso.year}")
+        semanas_valores.append(sem_ent.get(key, 0))
+
+    return {
+        "tempo_por_locadora":  tempo_locadora,
+        "tempo_por_vendedor":  tempo_vendedor,
+        "tempo_por_montadora": tempo_montadora,
+        "tempo_por_modelo":    tempo_modelo,
+        "taxa_atraso":         taxa_atraso,
+        "semanas_labels":      semanas_labels,
+        "entregas_por_semana": semanas_valores,
+        "total_entregues":     len(entregues),
+        "filtro": {
+            "data_inicio": dt_inicio.strftime("%Y-%m-%d"),
+            "data_fim":    dt_fim_dt.strftime("%Y-%m-%d"),
+        },
+    }
+
+
 # ── Helpers ───────────────────────────────────────────────
 def _contrato_to_dict(c: Contrato) -> dict:
     def iso(dt):
@@ -2426,6 +2617,7 @@ def _contrato_to_dict(c: Contrato) -> dict:
         "data_venda": iso(c.data_venda),
         "pedido_id_locadora": c.pedido_id_locadora,
         "pedido_portal_id": c.pedido_portal_id,
+        "vendedor": c.vendedor,
         "ultima_atualizacao": iso(c.ultima_atualizacao),
         "etapas": [],  # preenchido via detalhe
     }
