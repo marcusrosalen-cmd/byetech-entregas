@@ -403,17 +403,30 @@ function renderAnalytics(d) {
       </div>
     </div>
 
-    <!-- Taxa de atraso por locadora -->
+    <!-- Taxa de atraso — carteira ativa -->
     <div class="charts-grid" style="margin-bottom:40px">
       <div class="chart-card">
-        <h3>Taxa de Atraso por Locadora (%)</h3>
+        <h3>Taxa de Atraso por Locadora — Carteira Ativa (%)</h3>
         <div class="chart-wrap tall"><canvas id="aChartTaxaAtraso"></canvas></div>
       </div>
       <div class="chart-card">
-        <h3>Tempo Médio de Atraso por Locadora (dias)</h3>
+        <h3>Dias de Atraso Atual por Locadora — Carteira Ativa</h3>
         <div class="chart-wrap tall"><canvas id="aChartDiasAtraso"></canvas></div>
       </div>
     </div>
+
+    <!-- Atraso histórico — entregas concluídas -->
+    <div class="charts-grid" style="margin-bottom:16px">
+      <div class="chart-card" style="grid-column:1/-1">
+        <h3>Atraso Real nas Entregas Concluídas por Locadora
+          <span style="font-size:11px;color:var(--muted);font-weight:400;margin-left:8px">
+            média de dias em relação ao prazo original · positivo = atrasou · negativo = adiantou
+          </span>
+        </h3>
+        <div class="chart-wrap" style="height:260px"><canvas id="aChartAtrasoHist"></canvas></div>
+      </div>
+    </div>
+    <div id="atraso-hist-table" style="margin-bottom:40px;overflow-x:auto"></div>
   `;
 
   destroyCharts(_analyticsCharts); _analyticsCharts = {};
@@ -448,12 +461,95 @@ function renderAnalytics(d) {
     options: { ...cOpts(), plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y}% (${d.taxa_atraso[ctx.dataIndex].atrasados}/${d.taxa_atraso[ctx.dataIndex].total})` } } } }
   });
 
-  // Tempo médio de atraso por locadora
+  // Dias de atraso atual — carteira ativa
   _analyticsCharts.diasAtraso = new Chart(document.getElementById('aChartDiasAtraso'), {
     type: 'bar',
-    data: { labels: taxaFontes, datasets: [{ label: 'Dias de Atraso', data: d.taxa_atraso.map(t => t.media_dias_atraso), backgroundColor: 'rgba(255,90,90,.5)', borderColor: '#FF5A5A', borderWidth: 1, borderRadius: 4 }] },
-    options: { ...cOpts(), plugins: { legend: { display: false } } }
+    data: { labels: taxaFontes, datasets: [{ label: 'Dias além do prazo', data: d.taxa_atraso.map(t => t.media_dias_atraso), backgroundColor: 'rgba(255,90,90,.5)', borderColor: '#FF5A5A', borderWidth: 1, borderRadius: 4 }] },
+    options: { ...cOpts(), plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y}d além do prazo (média dos contratos atrasados)` } } } }
   });
+
+  // Atraso real histórico — entregas concluídas
+  const ah = d.atraso_historico || [];
+  if (ah.length) {
+    const ahFontes = ah.map(x => x.fonte);
+    const ahMedias = ah.map(x => x.media_dias);
+    const ahColors = ahMedias.map(v =>
+      v > 0 ? 'rgba(255,90,90,.65)' : v < 0 ? 'rgba(0,229,160,.65)' : 'rgba(100,116,139,.5)'
+    );
+    const ahBorders = ahMedias.map(v =>
+      v > 0 ? '#FF5A5A' : v < 0 ? '#00E5A0' : '#64748b'
+    );
+
+    _analyticsCharts.atrasoHist = new Chart(document.getElementById('aChartAtrasoHist'), {
+      type: 'bar',
+      data: {
+        labels: ahFontes,
+        datasets: [{
+          label: 'Média dias (real − prazo)',
+          data: ahMedias,
+          backgroundColor: ahColors,
+          borderColor: ahBorders,
+          borderWidth: 1,
+          borderRadius: 4,
+        }]
+      },
+      options: {
+        ...cOpts(),
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const i = ctx.dataIndex;
+                const row = ah[i];
+                const sinal = row.media_dias > 0 ? '+' : '';
+                return [
+                  ` ${sinal}${row.media_dias}d em média`,
+                  ` ${row.atrasados} atrasadas (${row.taxa_atraso}%)`,
+                  ` ${row.adiantados} adiantadas`,
+                  ` ${row.no_prazo} no prazo`,
+                  ` Total: ${row.total} entregas`,
+                ];
+              }
+            }
+          }
+        },
+        scales: {
+          ...cOpts().scales,
+          y: {
+            ...cOpts().scales?.y,
+            ticks: { color: '#8AABA0', callback: v => (v > 0 ? '+' : '') + v + 'd' },
+            grid: { color: 'rgba(0,96,122,.18)' },
+          }
+        }
+      }
+    });
+
+    // Tabela resumo abaixo do gráfico
+    const rows = ah.map(r => `
+      <tr>
+        <td><span class="badge badge-${(r.fonte||'outro').toLowerCase().replace(/ /g,'').replace(/&/g,'')}">${r.fonte}</span></td>
+        <td style="text-align:center;font-weight:700;color:${r.media_dias>0?'var(--red)':r.media_dias<0?'var(--green)':'var(--muted)'}">${r.media_dias > 0 ? '+' : ''}${r.media_dias}d</td>
+        <td style="text-align:center;color:var(--red)">${r.atrasados} <span style="color:var(--muted);font-size:11px">(${r.taxa_atraso}%)</span></td>
+        <td style="text-align:center;color:var(--green)">${r.adiantados}</td>
+        <td style="text-align:center;color:var(--muted)">${r.no_prazo}</td>
+        <td style="text-align:center;font-weight:600">${r.total}</td>
+      </tr>`).join('');
+    document.getElementById('atraso-hist-table').innerHTML = `
+      <table style="width:100%;border-collapse:collapse;font-size:13px;background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden">
+        <thead>
+          <tr style="border-bottom:2px solid var(--border)">
+            <th style="padding:10px 14px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;text-align:left">Locadora</th>
+            <th style="padding:10px 14px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;text-align:center">Média</th>
+            <th style="padding:10px 14px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;text-align:center">Atrasadas</th>
+            <th style="padding:10px 14px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;text-align:center">Adiantadas</th>
+            <th style="padding:10px 14px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;text-align:center">No prazo</th>
+            <th style="padding:10px 14px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;text-align:center">Total</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
 
   document.getElementById('filter-result').textContent =
     `${nEnt} entregas • ${d.filtro.data_inicio} → ${d.filtro.data_fim}`;

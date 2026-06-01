@@ -2562,6 +2562,40 @@ async def stats_analytics(
         key=lambda x: -x["taxa_perc"],
     )
 
+    # Atraso histórico por locadora (sobre entregas concluídas com prazo original)
+    hist_atraso: dict[str, dict] = defaultdict(lambda: {"dias": [], "total": 0, "atrasados": 0, "adiantados": 0})
+    for c in entregues:
+        if not c.data_entrega_definitiva or not c.data_prevista_entrega:
+            continue
+        de = c.data_entrega_definitiva.date() if isinstance(c.data_entrega_definitiva, datetime) else c.data_entrega_definitiva
+        dp = c.data_prevista_entrega.date()   if isinstance(c.data_prevista_entrega,   datetime) else c.data_prevista_entrega
+        diff = (de - dp).days   # positivo = atrasou, negativo = adiantou
+        if abs(diff) > 365:     # sanity: ignora outliers absurdos
+            continue
+        f = c.fonte or ""
+        hist_atraso[f]["dias"].append(diff)
+        hist_atraso[f]["total"] += 1
+        if diff > 0:
+            hist_atraso[f]["atrasados"] += 1
+        elif diff < 0:
+            hist_atraso[f]["adiantados"] += 1
+
+    atraso_historico = sorted(
+        [
+            {
+                "fonte":        f,
+                "total":        v["total"],
+                "atrasados":    v["atrasados"],
+                "adiantados":   v["adiantados"],
+                "no_prazo":     v["total"] - v["atrasados"] - v["adiantados"],
+                "media_dias":   round(sum(v["dias"]) / len(v["dias"]), 1) if v["dias"] else 0,
+                "taxa_atraso":  round(v["atrasados"] / v["total"] * 100, 1) if v["total"] else 0,
+            }
+            for f, v in hist_atraso.items()
+        ],
+        key=lambda x: -x["total"],
+    )
+
     # Entregas por semana no período
     sem_ent: dict[str, int] = defaultdict(int)
     for c in entregues:
@@ -2589,6 +2623,7 @@ async def stats_analytics(
         "tempo_por_montadora": tempo_montadora,
         "tempo_por_modelo":    tempo_modelo,
         "taxa_atraso":         taxa_atraso,
+        "atraso_historico":    atraso_historico,
         "semanas_labels":      semanas_labels,
         "entregas_por_semana": semanas_valores,
         "total_entregues":     len(entregues),
