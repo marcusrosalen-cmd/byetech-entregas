@@ -168,30 +168,41 @@ async def _fetch_metabase(params_json: list = None) -> list[dict]:
 
 async def fetch_all_active(include_recent_delivered_days: int = 30) -> list[dict]:
     """
-    Busca todos os contratos ativos + contratos entregues nos últimos N dias.
+    Busca todos os contratos ativos + TODOS os contratos entregues do Metabase.
 
-    Inclui recém-entregues para que run_metabase_sync consiga detectar a transição
-    "pendente → entregue" e notificar o Byetech CRM automaticamente.
+    O parâmetro include_recent_delivered_days é mantido por compatibilidade,
+    mas não limita mais o período de entregues: todos são incluídos para garantir
+    que os históricos sejam restaurados automaticamente após restart do servidor
+    (Render free tier tem filesystem efêmero — o sync diário reconstrói o banco).
+
+    Regra de inclusão:
+    - Ativo (contrato_ativo != false/0): sempre inclui
+    - Inativo COM data_entrega_definitivo: inclui (entregue)
+    - Inativo SEM data_entrega_definitivo: pula (cancelado / erro de cadastro)
+    - estorno=true: pula sempre
     """
     rows = await _fetch_metabase()
     logger.info(f"Metabase: {len(rows)} registros totais")
-    cutoff = datetime.utcnow() - timedelta(days=include_recent_delivered_days)
 
     result = []
     n_entregues = 0
     for r in rows:
-        if r.get("contrato_ativo") is False or r.get("estorno"):
+        if r.get("estorno"):
             continue
-        fase = str(r.get("contrato_fase") or "")
-        if fase.lower() in ("definitivo entregue", "definitivo_entregue", "pedido concluído", "pedido concluido"):
-            data_ent = _parse_date(r.get("data_entrega_definitivo"))
-            if data_ent and data_ent >= cutoff:
-                result.append(_row_to_contrato(r))
-                n_entregues += 1
-        else:
-            result.append(_row_to_contrato(r))
 
-    logger.info(f"Metabase: {len(result) - n_entregues} ativos + {n_entregues} entregues recentes")
+        ativo = r.get("contrato_ativo")
+        is_inactive = (ativo is False or ativo == 0 or ativo == "0")
+        tem_entrega = bool(_parse_date(r.get("data_entrega_definitivo")))
+
+        if is_inactive and not tem_entrega:
+            continue  # cancelado ou inativo sem entrega — ignora
+
+        c = _row_to_contrato(r)
+        if tem_entrega:
+            n_entregues += 1
+        result.append(c)
+
+    logger.info(f"Metabase: {len(result) - n_entregues} ativos + {n_entregues} entregues (histórico completo)")
     return result
 
 
