@@ -2563,7 +2563,7 @@ async def stats_analytics(
     )
 
     # Atraso histórico por locadora (sobre entregas concluídas com prazo original)
-    hist_atraso: dict[str, dict] = defaultdict(lambda: {"dias": [], "total": 0, "atrasados": 0, "adiantados": 0})
+    hist_atraso: dict[str, dict] = defaultdict(lambda: {"dias": [], "dias_pos": [], "total": 0, "atrasados": 0, "adiantados": 0})
     for c in entregues:
         if not c.data_entrega_definitiva or not c.data_prevista_entrega:
             continue
@@ -2577,19 +2577,21 @@ async def stats_analytics(
         hist_atraso[f]["total"] += 1
         if diff > 0:
             hist_atraso[f]["atrasados"] += 1
+            hist_atraso[f]["dias_pos"].append(diff)   # só os que atrasaram
         elif diff < 0:
             hist_atraso[f]["adiantados"] += 1
 
     atraso_historico = sorted(
         [
             {
-                "fonte":        f,
-                "total":        v["total"],
-                "atrasados":    v["atrasados"],
-                "adiantados":   v["adiantados"],
-                "no_prazo":     v["total"] - v["atrasados"] - v["adiantados"],
-                "media_dias":   round(sum(v["dias"]) / len(v["dias"]), 1) if v["dias"] else 0,
-                "taxa_atraso":  round(v["atrasados"] / v["total"] * 100, 1) if v["total"] else 0,
+                "fonte":              f,
+                "total":              v["total"],
+                "atrasados":          v["atrasados"],
+                "adiantados":         v["adiantados"],
+                "no_prazo":           v["total"] - v["atrasados"] - v["adiantados"],
+                "media_dias":         round(sum(v["dias"]) / len(v["dias"]), 1) if v["dias"] else 0,
+                "media_dias_positivo": round(sum(v["dias_pos"]) / len(v["dias_pos"]), 1) if v["dias_pos"] else 0,
+                "taxa_atraso":        round(v["atrasados"] / v["total"] * 100, 1) if v["total"] else 0,
             }
             for f, v in hist_atraso.items()
         ],
