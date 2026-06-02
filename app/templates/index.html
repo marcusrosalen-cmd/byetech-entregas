@@ -396,6 +396,24 @@
   </div>
 </div>
 
+<!-- MODAL CANCELAR CONTRATO -->
+<div id="modal-cancelar" class="modal hidden">
+  <div class="modal-box modal-sm">
+    <div class="modal-header">
+      <h2>Cancelar contrato</h2>
+      <button class="modal-close" onclick="closeModal('modal-cancelar')">✕</button>
+    </div>
+    <div class="modal-content">
+      <p style="margin-bottom:1rem">Tem certeza que deseja cancelar o contrato de <strong id="cancel-contrato-nome"></strong>?</p>
+      <p style="color:var(--muted);font-size:.85rem">O contrato será removido da listagem de pendentes. Esta ação pode ser desfeita manualmente pelo suporte.</p>
+      <div style="display:flex;gap:.75rem;margin-top:1.5rem">
+        <button id="btn-confirmar-cancelar" class="btn btn-danger" style="flex:1" onclick="executarCancelamento()">Sim, cancelar</button>
+        <button class="btn btn-ghost" onclick="closeModal('modal-cancelar')">Voltar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- TOAST -->
 <div id="toast" class="toast hidden"></div>
 

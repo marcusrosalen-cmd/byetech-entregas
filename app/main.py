@@ -327,6 +327,29 @@ async def get_contratos_entregues(
     }
 
 
+@app.get("/api/contratos/cancelados")
+async def get_contratos_cancelados(
+    db: AsyncSession = Depends(get_db),
+    _auth=Depends(require_auth),
+    search: Optional[str] = None,
+):
+    result = await db.execute(
+        select(Contrato)
+        .where(Contrato.status_atual.in_(["Cancelado", "cancelado"]))
+        .order_by(Contrato.ultima_atualizacao.desc())
+    )
+    rows = result.scalars().all()
+    if search:
+        s = search.lower()
+        rows = [
+            c for c in rows
+            if s in (c.cliente_nome or "").lower()
+            or s in (c.cliente_cpf_cnpj or "").lower()
+            or s in (c.placa or "").lower()
+        ]
+    return {"total": len(rows), "contratos": [_contrato_to_dict(c) for c in rows]}
+
+
 @app.get("/api/contratos/{contrato_id}")
 async def get_contrato(contrato_id: str, db: AsyncSession = Depends(get_db), _auth=Depends(require_auth)):
     import json, re as _re
@@ -499,6 +522,64 @@ async def marcar_entregue(contrato_id: str, body: EntregarBody, db: AsyncSession
         "byetech_status": byetech_status,
         "byetech_msg":    byetech_msg,
     }
+
+
+@app.post("/api/contratos/{contrato_id}/reativar")
+async def reativar_contrato(contrato_id: str, db: AsyncSession = Depends(get_db), _auth=Depends(require_auth)):
+    result = await db.execute(select(Contrato).where(Contrato.id == contrato_id))
+    c = result.scalar_one_or_none()
+    if not c:
+        raise HTTPException(404, "Contrato não encontrado")
+
+    # Busca o status anterior no histórico
+    hist_result = await db.execute(
+        select(HistoricoStatus)
+        .where(
+            HistoricoStatus.contrato_id == contrato_id,
+            HistoricoStatus.status_novo.in_(["Cancelado", "cancelado"]),
+        )
+        .order_by(HistoricoStatus.criado_em.desc())
+        .limit(1)
+    )
+    ultimo_hist = hist_result.scalar_one_or_none()
+    status_restaurado = (ultimo_hist.status_anterior if ultimo_hist and ultimo_hist.status_anterior else None) or "Em andamento"
+
+    c.status_atual = status_restaurado
+    c.ultima_atualizacao = datetime.utcnow()
+
+    db.add(HistoricoStatus(
+        contrato_id=contrato_id,
+        status_anterior="Cancelado",
+        status_novo=status_restaurado,
+        fonte="MANUAL",
+    ))
+    await db.commit()
+    logger.info(f"[Contrato] {contrato_id} reativado (restaurado para: {status_restaurado})")
+    return {"ok": True, "status": status_restaurado}
+
+
+@app.post("/api/contratos/{contrato_id}/cancelar")
+async def cancelar_contrato(contrato_id: str, db: AsyncSession = Depends(get_db), _auth=Depends(require_auth)):
+    result = await db.execute(select(Contrato).where(Contrato.id == contrato_id))
+    c = result.scalar_one_or_none()
+    if not c:
+        raise HTTPException(404, "Contrato não encontrado")
+
+    status_anterior = c.status_atual
+    c.status_atual = "Cancelado"
+    c.ultima_atualizacao = datetime.utcnow()
+
+    hist = HistoricoStatus(
+        contrato_id=contrato_id,
+        status_anterior=status_anterior,
+        status_novo="Cancelado",
+        fonte="MANUAL",
+    )
+    db.add(hist)
+    await db.commit()
+
+    logger.info(f"[Contrato] {contrato_id} cancelado manualmente (era: {status_anterior})")
+    return {"ok": True, "status": "Cancelado"}
 
 
 # ── Fila de atualizações Byetech pendentes (persistida no banco de dados) ──

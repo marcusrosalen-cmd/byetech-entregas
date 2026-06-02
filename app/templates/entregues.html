@@ -386,6 +386,10 @@
       ⏳ Pendentes Byetech
       <span class="tab-badge zero" id="pend-badge">0</span>
     </button>
+    <button class="tab-btn" id="tab-cancelados" onclick="switchTab('cancelados')">
+      ✕ Cancelados
+      <span class="tab-badge zero" id="cancel-badge">0</span>
+    </button>
   </div>
 
   <!-- ── PAINEL: ENTREGUES ── -->
@@ -474,6 +478,34 @@
     </div>
 
   </div><!-- fim panel-pendentes -->
+
+  <!-- ── PAINEL: CANCELADOS ── -->
+  <div class="tab-panel" id="panel-cancelados">
+    <div class="pend-info" style="border-color:rgba(255,90,90,.3);background:rgba(255,90,90,.05)">
+      Contratos cancelados manualmente. Clique em <strong>↩ Reativar</strong> para devolver à listagem de pendentes.
+    </div>
+    <div style="padding:12px 24px">
+      <input type="text" id="cancel-search" placeholder="🔍 Nome, CPF, placa…" oninput="loadCancelados()"
+        style="background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--text);font-size:13px;width:300px;outline:none"/>
+    </div>
+    <div class="pend-table-wrap">
+      <table class="pend-table">
+        <thead>
+          <tr>
+            <th>Locadora</th>
+            <th>Cliente</th>
+            <th>CPF/CNPJ</th>
+            <th>Veículo / Placa</th>
+            <th>Cancelado em</th>
+            <th style="text-align:center">Ação</th>
+          </tr>
+        </thead>
+        <tbody id="cancel-body">
+          <tr><td colspan="6" class="empty-msg"><div class="spinner"></div><br>Carregando…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div><!-- fim panel-cancelados -->
 
 </div>
 
@@ -733,7 +765,8 @@ function switchTab(tab) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.getElementById('tab-' + tab).classList.add('active');
   document.getElementById('panel-' + tab).classList.add('active');
-  if (tab === 'pendentes') loadPendentes();
+  if (tab === 'pendentes')  loadPendentes();
+  if (tab === 'cancelados') loadCancelados();
 }
 
 // ── Pendentes Byetech ─────────────────────────────────────────────────────────
@@ -822,6 +855,74 @@ async function loadPendBadge() {
   } catch(_) {}
 }
 
+// ── Cancelados ────────────────────────────────────────────────────────────────
+async function loadCancelados() {
+  const tbody  = document.getElementById('cancel-body');
+  const search = (document.getElementById('cancel-search')?.value || '').trim();
+  tbody.innerHTML = '<tr><td colspan="6" class="empty-msg"><div class="spinner"></div><br>Carregando…</td></tr>';
+  try {
+    const params = search ? '?search=' + encodeURIComponent(search) : '';
+    const res = await fetch('/api/contratos/cancelados' + params);
+    const d   = await res.json();
+    const badge = document.getElementById('cancel-badge');
+    badge.textContent = d.total || 0;
+    badge.className = 'tab-badge' + (d.total === 0 ? ' zero' : '');
+    if (!d.contratos || !d.contratos.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-msg" style="color:var(--green)">✓ Nenhum contrato cancelado.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = d.contratos.map(c => {
+      const canceladoEm = c.ultima_atualizacao
+        ? new Date(c.ultima_atualizacao).toLocaleDateString('pt-BR') : '—';
+      const veiculo = [c.veiculo, c.placa].filter(Boolean).join(' · ');
+      return `<tr id="cancel-row-${c.id}">
+        <td><span class="fonte-badge fonte-${(c.fonte||'').toLowerCase().replace(/[^a-z]/g,'')}">${esc(c.fonte||'—')}</span></td>
+        <td style="font-weight:600">${esc(c.cliente_nome||'—')}</td>
+        <td style="font-family:monospace;font-size:12px">${esc(fmtDoc(c.cliente_cpf_cnpj||''))}</td>
+        <td style="color:var(--muted)">${esc(veiculo||'—')}</td>
+        <td style="color:var(--muted)">${canceladoEm}</td>
+        <td style="text-align:center">
+          <button class="btn-feito" id="btn-reativar-${c.id}" onclick="reativarContrato('${c.id}')"
+            style="background:rgba(0,255,255,.1);border-color:var(--accent);color:var(--accent)">
+            ↩ Reativar
+          </button>
+        </td>
+      </tr>`;
+    }).join('');
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-msg" style="color:#ef4444">Erro: ${e.message}</td></tr>`;
+  }
+}
+
+async function reativarContrato(id) {
+  const btn = document.getElementById('btn-reativar-' + id);
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const res  = await fetch(`/api/contratos/${id}/reativar`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Erro');
+    document.getElementById('cancel-row-' + id)?.remove();
+    const badge = document.getElementById('cancel-badge');
+    const n = Math.max(0, parseInt(badge.textContent || '0') - 1);
+    badge.textContent = n;
+    badge.className = 'tab-badge' + (n === 0 ? ' zero' : '');
+    showToast(`↩ Contrato reativado (status: ${data.status})`, 'success');
+  } catch(e) {
+    showToast('Erro ao reativar: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '↩ Reativar'; }
+  }
+}
+
+async function loadCancelBadge() {
+  try {
+    const res = await fetch('/api/contratos/cancelados');
+    const d   = await res.json();
+    const badge = document.getElementById('cancel-badge');
+    badge.textContent = d.total || 0;
+    badge.className = 'tab-badge' + ((d.total || 0) === 0 ? ' zero' : '');
+  } catch(_) {}
+}
+
 // ── Importar histórico do Metabase ────────────────────────────────────────────
 async function importarHistorico() {
   const btn = document.getElementById('btn-importar');
@@ -868,6 +969,7 @@ async function importarHistorico() {
 // Carrega ao iniciar
 loadData();
 loadPendBadge();
+loadCancelBadge();
 
 async function doLogout() {
   try { await fetch('/api/auth/logout', { method: 'POST' }); } catch(_) {}

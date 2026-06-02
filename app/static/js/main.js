@@ -420,6 +420,7 @@ function buildAcoesCell(c, entregue) {
 
   if (!entregue) {
     btns.push(`<button class="btn btn-sm btn-success" onclick="markDelivered('${c.id}')">✓ Entregar</button>`);
+    btns.push(`<button class="btn btn-sm btn-danger" onclick="confirmCancel('${c.id}', '${(c.cliente_nome||'').replace(/'/g,"\\'")}')">✕ Cancelar</button>`);
   }
 
   if (c.fonte === 'UNIDAS') {
@@ -923,6 +924,35 @@ async function confirmDelivery() {
     showToast('Erro ao registrar entrega: ' + e.message, 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Confirmar Entrega'; }
+  }
+}
+
+// ── Cancelar contrato ─────────────────────────────────────
+let _pendingCancelId = null;
+
+function confirmCancel(id, nome) {
+  _pendingCancelId = id;
+  const label = document.getElementById('cancel-contrato-nome');
+  if (label) label.textContent = nome || id;
+  openModal('modal-cancelar');
+}
+
+async function executarCancelamento() {
+  const id = _pendingCancelId;
+  if (!id) return;
+  const btn = document.getElementById('btn-confirmar-cancelar');
+  if (btn) { btn.disabled = true; btn.textContent = 'Cancelando...'; }
+  try {
+    await api(`/contratos/${id}/cancelar`, { method: 'POST' });
+    closeModal('modal-cancelar');
+    closeModal('modal-detail');
+    showToast('Contrato cancelado e removido da listagem.', 'success');
+    _pendingCancelId = null;
+    loadContracts();
+  } catch (e) {
+    showToast('Erro ao cancelar: ' + e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Sim, cancelar'; }
   }
 }
 
