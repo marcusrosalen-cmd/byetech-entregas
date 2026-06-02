@@ -413,6 +413,7 @@ class EntregarBody(BaseModel):
 class PatchContratoBody(BaseModel):
     observacoes: Optional[str] = None
     nova_previsao_entrega: Optional[str] = None  # YYYY-MM-DD
+    fonte: Optional[str] = None
 
 
 @app.patch("/api/contratos/{contrato_id}")
@@ -425,6 +426,9 @@ async def patch_contrato(contrato_id: str, body: PatchContratoBody, db: AsyncSes
 
     if body.observacoes is not None:
         c.observacoes = body.observacoes.strip() or None
+
+    if body.fonte is not None:
+        c.fonte = body.fonte.strip() or None
 
     if body.nova_previsao_entrega is not None:
         if body.nova_previsao_entrega == "":
