@@ -57,6 +57,13 @@ def _contrato_id(fonte: str, id_externo: str, cpf: str) -> str:
     return f"{fonte}_{key}".upper()
 
 
+# Overrides manuais de fonte para contratos específicos.
+# O ID gerado (FONTE_ID) permanece o mesmo, mas a coluna `fonte` exibida é substituída.
+_FONTE_OVERRIDES: dict[str, str] = {
+    "LOCALIZA_15643": "UNIDAS",  # Contrato de teste Marcus Rosalen
+}
+
+
 async def _upsert_contrato(session: AsyncSession, data: dict, portal_update: bool = False) -> bool:
     """
     Insere ou atualiza um contrato.
@@ -70,6 +77,9 @@ async def _upsert_contrato(session: AsyncSession, data: dict, portal_update: boo
     id_externo = data.get("id_externo", "")
     cpf = data.get("cliente_cpf_cnpj", "")
     contrato_id = _contrato_id(fonte, id_externo, cpf)
+
+    # Aplica override de fonte, se houver
+    fonte = _FONTE_OVERRIDES.get(contrato_id, fonte)
 
     result = await session.execute(select(Contrato).where(Contrato.id == contrato_id))
     existing = result.scalar_one_or_none()
@@ -93,6 +103,10 @@ async def _upsert_contrato(session: AsyncSession, data: dict, portal_update: boo
         existing.status_anterior = status_anterior
         existing.status_atual = status_novo or existing.status_atual
         existing.ultima_atualizacao = datetime.utcnow()
+
+        # Aplica override de fonte mesmo em registros já existentes
+        if contrato_id in _FONTE_OVERRIDES:
+            existing.fonte = _FONTE_OVERRIDES[contrato_id]
 
         dp = data.get("data_prevista_entrega")
         if dp:
