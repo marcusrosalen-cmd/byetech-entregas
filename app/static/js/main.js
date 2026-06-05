@@ -80,10 +80,11 @@ let _loadRetryTimer = null;
 
 async function loadContracts() {
   try {
-    // Busca contratos e status da sessão em paralelo — independentes
+    // Busca contratos, entregas de hoje e status da sessão em paralelo
     const [data] = await Promise.all([
       api('/contratos'),
-      checkByetechPending().catch(() => {}),  // nunca bloqueia o carregamento de contratos
+      checkByetechPending().catch(() => {}),
+      loadTodayDeliveries().catch(() => {}),  // atualiza card "Entregas hoje" do banco
     ]);
     allContracts = data.contratos || [];
 
@@ -111,6 +112,14 @@ async function loadContracts() {
   } catch (e) {
     showToast('Erro ao carregar contratos: ' + e.message, 'error');
   }
+}
+
+async function loadTodayDeliveries() {
+  try {
+    const d = await api('/contratos/entregas-hoje');
+    todayDeliveries = d.total || 0;
+    setStatNum('stat-hoje', todayDeliveries);
+  } catch (_) {}
 }
 
 // ── Stats ─────────────────────────────────────────────────

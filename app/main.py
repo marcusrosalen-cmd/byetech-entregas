@@ -1694,6 +1694,9 @@ async def sync_signanddrive(body: SdSyncBody | None = None):
             n_sem = len(resultado.get("sem_pedido", []))
             n_err = len(resultado.get("erros", []))
 
+            # Atualiza entregas_hoje no sync state para o card da UI
+            from app.services.sync_service import _resumo_entregas_hoje
+            entregas_hoje = await _resumo_entregas_hoje()
             set_sync_state(
                 status="done",
                 message=(
@@ -1701,6 +1704,7 @@ async def sync_signanddrive(body: SdSyncBody | None = None):
                     f"{n_mud} mudanca(s) de status | {n_sem} sem pedido"
                 ),
                 atualizados=n_ent + n_mud,
+                entregas_hoje=entregas_hoje,
             )
 
             # Envia resumo no Slack
@@ -1767,10 +1771,14 @@ async def sync_gwm_portal():
             n_nao  = len(resultado.get("nao_encontrados", []))
             n_err  = len(resultado.get("erros", []))
 
+            # Atualiza entregas_hoje no sync state para o card da UI
+            from app.services.sync_service import _resumo_entregas_hoje
+            entregas_hoje = await _resumo_entregas_hoje()
             set_sync_state(
                 status="done",
                 message=f"GWM Portal concluido — {n_ent} entregue(s) | {n_nao} nao encontrados",
                 atualizados=n_ent,
+                entregas_hoje=entregas_hoje,
             )
 
             # Slack
