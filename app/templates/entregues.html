@@ -523,8 +523,9 @@ let _state = {
   search: '',
   fromDate: '',
   toDate: '',
-  loading: false,
 };
+let _currentController = null;   // AbortController da request em andamento
+let _filterDebounce    = null;    // timer de debounce para filtros
 
 // Inicializa datas: mês atual por padrão
 (function initDates() {
@@ -537,12 +538,18 @@ let _state = {
 })();
 
 function fmtInputDate(d) {
-  return d.toISOString().split('T')[0];
+  // Usa hora local (não UTC) para evitar shift de 1 dia no fuso BRT (UTC-3)
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 async function loadData(resetPage = true) {
-  if (_state.loading) return;
-  _state.loading = true;
+  // Cancela request anterior se ainda estiver em andamento
+  if (_currentController) _currentController.abort();
+  _currentController = new AbortController();
+
   if (resetPage) _state.page = 1;
 
   const params = new URLSearchParams({
@@ -555,7 +562,8 @@ async function loadData(resetPage = true) {
   if (_state.search)   params.set('search',    _state.search);
 
   try {
-    const res = await fetch('/api/contratos/entregues?' + params);
+    const res = await fetch('/api/contratos/entregues?' + params,
+                            { signal: _currentController.signal });
     const d   = await res.json();
 
     _state.totalApi = d.total || 0;
@@ -569,10 +577,9 @@ async function loadData(resetPage = true) {
     document.getElementById('last-updated').textContent =
       'Atualizado: ' + dt.toLocaleTimeString('pt-BR');
   } catch(e) {
+    if (e.name === 'AbortError') return; // request cancelada — ignora silenciosamente
     document.getElementById('table-body').innerHTML =
       `<tr><td colspan="7" class="empty-msg" style="color:#ef4444">Erro ao carregar: ${e.message}</td></tr>`;
-  } finally {
-    _state.loading = false;
   }
 }
 
@@ -609,7 +616,10 @@ function onFilterChange() {
   _state.fonte    = document.getElementById('f-fonte').value;
   _state.fromDate = document.getElementById('f-from').value;
   _state.toDate   = document.getElementById('f-to').value;
-  loadData();
+  // Debounce: aguarda 250ms antes de disparar a request
+  // Evita chamadas duplicadas quando o usuário muda "de" e "até" em sequência rápida
+  clearTimeout(_filterDebounce);
+  _filterDebounce = setTimeout(loadData, 250);
 }
 
 function clearFilters() {
