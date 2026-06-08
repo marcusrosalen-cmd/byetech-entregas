@@ -887,13 +887,19 @@ async def run_signanddrive_sync(
     def _d(s):
         return _re.sub(r"\D", "", s or "")
 
-    # Indice CPF -> contrato existente (lookup por CPF, nao por ID gerado)
+    # Indice CPF/CNPJ -> contrato existente (cobre PF e PJ)
     cpf_to_contrato: dict[str, Contrato] = {}
     for c in contratos_db:
         d = _d(c.cliente_cpf_cnpj)
-        for v in {d, d.zfill(11), d[:-1] if len(d)==12 else d,
-                  ("0"+d[:-1]) if (len(d)==11 and d.endswith("0")) else d}:
-            cpf_to_contrato.setdefault(v, c)
+        if len(d) > 11:
+            # CNPJ (PJ): indexa com e sem zeros à esquerda
+            for v in {d, d.zfill(14)}:
+                cpf_to_contrato.setdefault(v, c)
+        else:
+            # CPF (PF): indexa variantes de normalização
+            for v in {d, d.zfill(11), d[:-1] if len(d)==12 else d,
+                      ("0"+d[:-1]) if (len(d)==11 and d.endswith("0")) else d}:
+                cpf_to_contrato.setdefault(v, c)
 
     clientes = [
         {

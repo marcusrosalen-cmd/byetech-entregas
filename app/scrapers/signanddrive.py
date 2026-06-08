@@ -131,20 +131,20 @@ def _fetch_page(token: str, ds: str, de: str, page: int, status: str = ""):
         return [], False
 
 
-def _build_cpf_index(token: str) -> dict:
+def _build_doc_index(token: str) -> dict:
     """
-    Retorna {cpf_norm: orderId} para todos os pedidos PF da concessionaria.
+    Retorna {doc_norm: orderId} para todos os pedidos da concessionaria — PF e PJ.
+
+    Indexa tanto CPF (11 dígitos) quanto CNPJ (14 dígitos), cobrindo:
+    - Contratos pessoa física (CPF): Sign & Drive, UNIDAS, MOVIDA, LOCALIZA, LM…
+    - Contratos pessoa jurídica (CNPJ): VW Empresas, Localiza PJ, LM PJ, GWM PJ…
 
     Consulta a management API com diferentes filtros de status:
     - status="" (vazio)  → pedidos ativos/em andamento
     - status="11"        → Pedido concluido (assinado, nao necessariamente entregue)
     - status="5"         → Veiculo Entregue (escala antiga; pode retornar entregues)
-
-    A combinacao de filtros maximiza a cobertura, capturando pedidos que
-    desaparecem da view "ativa" apos a entrega.
     """
     idx = {}
-    # Filtros de status a tentar: vazio (ativos) + concluidos + entregues
     status_filters = ["", "11", "5"]
     for ds, de in _date_windows():
         for st in status_filters:
@@ -154,19 +154,31 @@ def _build_cpf_index(token: str) -> dict:
                 if not itens:
                     break
                 for it in itens:
-                    cpf_raw = it.get("cpfCnpj", "")
-                    if not cpf_raw or len(_digits(cpf_raw)) > 11:
+                    doc_raw = it.get("cpfCnpj", "")
+                    if not doc_raw:
                         continue
-                    cpf_norm = _normalizar_cpf(cpf_raw)
+                    digits = _digits(doc_raw)
                     oid = it.get("orderId")
-                    if cpf_norm not in idx:
-                        idx[cpf_norm] = oid
-                        for v in _cpf_variants(cpf_raw):
-                            idx.setdefault(v, oid)
+                    if len(digits) <= 11:
+                        # CPF — normaliza e indexa variantes
+                        cpf_norm = _normalizar_cpf(doc_raw)
+                        if cpf_norm not in idx:
+                            idx[cpf_norm] = oid
+                            for v in _cpf_variants(doc_raw):
+                                idx.setdefault(v, oid)
+                    else:
+                        # CNPJ — indexa com e sem zeros à esquerda
+                        cnpj_norm = digits.zfill(14)
+                        idx.setdefault(cnpj_norm, oid)
+                        idx.setdefault(digits, oid)
                 if not has_next:
                     break
                 page += 1
     return idx
+
+
+# Mantém alias para retrocompatibilidade
+_build_cpf_index = _build_doc_index
 
 
 # ── Order Detail ──────────────────────────────────────────────────────────────
@@ -280,19 +292,28 @@ async def scrape_signanddrive(clientes: list[dict]) -> list[dict]:
 
         # Clientes sem orderId -> management API (so mostra pedidos ativos)
         if clientes_sem_oid:
-            logger.info("Sign & Drive: construindo indice CPF->orderId para novos clientes...")
-            idx = _build_cpf_index(token)
+            logger.info("Sign & Drive: construindo indice DOC->orderId (CPF+CNPJ)...")
+            idx = _build_doc_index(token)
             logger.info(f"Sign & Drive: {len(idx)} entradas no indice")
 
             for cli in clientes_sem_oid:
-                cpf_raw  = cli.get("cliente_cpf_cnpj", "")
-                cpf_norm = _normalizar_cpf(cpf_raw)
-                oid = idx.get(cpf_norm)
-                if not oid:
-                    for v in _cpf_variants(cpf_raw):
-                        oid = idx.get(v)
-                        if oid:
-                            break
+                doc_raw = cli.get("cliente_cpf_cnpj", "")
+                digits  = _digits(doc_raw)
+                oid = None
+
+                if len(digits) > 11:
+                    # CNPJ (PJ) — VW Empresas, Localiza PJ, LM PJ, GWM PJ…
+                    oid = idx.get(digits.zfill(14)) or idx.get(digits)
+                else:
+                    # CPF (PF)
+                    cpf_norm = _normalizar_cpf(doc_raw)
+                    oid = idx.get(cpf_norm)
+                    if not oid:
+                        for v in _cpf_variants(doc_raw):
+                            oid = idx.get(v)
+                            if oid:
+                                break
+
                 if oid:
                     order_map.setdefault(oid, []).append(cli)
                 else:
