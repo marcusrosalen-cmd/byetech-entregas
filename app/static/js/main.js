@@ -448,13 +448,13 @@ function buildAcoesCell(c, entregue) {
 
 // ── Urgência helpers ──────────────────────────────────────
 function getUrgencia(dias, atrasado) {
-  if (atrasado || dias < 0)
-    return { rowClass: 'atrasado', badgeClass: 'atrasado', diasClass: 'atrasado' };
-  if (dias <= 5)
-    return { rowClass: 'critico',  badgeClass: 'critico',  diasClass: 'critico' };
-  if (dias <= 20)
-    return { rowClass: '',         badgeClass: 'alerta',   diasClass: 'alerta' };
-  return   { rowClass: '',         badgeClass: 'ok',       diasClass: 'ok' };
+  if (atrasado) return { rowClass: 'atrasado', badgeClass: 'atrasado', diasClass: 'atrasado' };
+  // null/undefined: não há previsão — exibe como ok, não como crítico
+  if (dias == null) return { rowClass: '', badgeClass: 'ok', diasClass: 'ok' };
+  if (dias < 0)  return { rowClass: 'atrasado', badgeClass: 'atrasado', diasClass: 'atrasado' };
+  if (dias <= 5) return { rowClass: 'critico',  badgeClass: 'critico',  diasClass: 'critico' };
+  if (dias <= 20) return { rowClass: '',         badgeClass: 'alerta',  diasClass: 'alerta' };
+  return           { rowClass: '',               badgeClass: 'ok',      diasClass: 'ok' };
 }
 
 // ── Filters ───────────────────────────────────────────────

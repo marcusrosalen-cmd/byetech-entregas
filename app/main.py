@@ -221,8 +221,10 @@ async def get_contratos(db: AsyncSession = Depends(get_db), _auth=Depends(requir
     contratos_list = []
     for c in contratos:
         dias = None
-        if c.data_prevista_entrega:
-            dp = c.data_prevista_entrega
+        # Usa nova_previsao_entrega como fallback quando data_prevista_entrega é nula
+        previsao = c.data_prevista_entrega or c.nova_previsao_entrega
+        if previsao:
+            dp = previsao
             if isinstance(dp, datetime):
                 dp = dp.date()
             dias = (dp - hoje).days
