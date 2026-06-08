@@ -131,9 +131,15 @@ def _row_to_contrato(row: dict) -> dict:
         or _parse_date(row.get("date(pedidos.data_venda)"))
     )
 
+    # O card público retorna id=c.id (contrato) e pedido_id=p.id (pedido).
+    # O MCP retorna apenas p.id como "id".
+    # Usar pedido_id preferentemente garante que ambas as fontes gerem o
+    # mesmo id_externo, evitando registros duplicados no banco.
+    pedido_id_externo = str(row.get("pedido_id") or row.get("id") or "")
+
     return {
-        "id_externo":               str(row.get("id") or ""),
-        "byetech_contrato_id":      str(row.get("id") or ""),
+        "id_externo":               pedido_id_externo,
+        "byetech_contrato_id":      pedido_id_externo,
         "fonte":                    fonte,
         "locadora_nome":            locadora,
         "cliente_nome":             str(row.get("nome_completo") or "").strip(),
