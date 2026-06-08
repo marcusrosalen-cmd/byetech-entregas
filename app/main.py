@@ -2251,6 +2251,38 @@ async def health_check():
     return {"ok": all_ok, "connections": results}
 
 
+@app.get("/api/debug/pendentes-por-fonte")
+async def debug_pendentes_por_fonte(token: str = ""):
+    """Diagnóstico: conta contratos pendentes (sem data_entrega) por fonte."""
+    if token != "byetech-entregas":
+        raise HTTPException(403, "token inválido")
+    from sqlalchemy import func as _func, case
+    async with SessionLocal() as s:
+        # Total por fonte para contratos pendentes
+        res = await s.execute(
+            select(Contrato.fonte, _func.count().label("total"))
+            .where(Contrato.data_entrega_definitiva.is_(None))
+            .group_by(Contrato.fonte)
+            .order_by(_func.count().desc())
+        )
+        pendentes = {row[0] or "?": row[1] for row in res.all()}
+
+        # Amostra de VW sem data_entrega
+        res2 = await s.execute(
+            select(Contrato.id, Contrato.cliente_nome, Contrato.cliente_cpf_cnpj, Contrato.status_atual)
+            .where(
+                and_(Contrato.fonte == "VW", Contrato.data_entrega_definitiva.is_(None))
+            )
+            .limit(5)
+        )
+        vw_sample = [
+            {"id": r[0], "nome": r[1], "doc": r[2], "status": r[3]}
+            for r in res2.all()
+        ]
+
+    return {"pendentes_por_fonte": pendentes, "vw_amostra": vw_sample}
+
+
 
 # ── API: Limpeza de registros obsoletos ──────────────────
 @app.post("/api/admin/cleanup-stale")
