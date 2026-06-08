@@ -4,6 +4,7 @@ Orquestra todos os scrapers e atualiza o banco de dados.
 """
 import asyncio
 import logging
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -133,6 +134,15 @@ async def _upsert_contrato(session: AsyncSession, data: dict, portal_update: boo
             existing.placa = data.get("placa") or existing.placa
             existing.byetech_contrato_id = data.get("byetech_contrato_id") or existing.byetech_contrato_id
             existing.vendedor = data.get("vendedor") or existing.vendedor
+
+            # Protege CNPJ: se já tem CNPJ (14 dígitos) não deixa CPF (≤11) sobrescrever.
+            # O card público do Metabase não retorna num_cnpj — apenas o MCP o traz.
+            # Assim, uma vez que o MCP atualiza o CNPJ, repopulações do card público
+            # não voltam a gravar CPF no lugar (crítico para VW Empresas e outros PJ).
+            new_doc = re.sub(r"\D", "", data.get("cliente_cpf_cnpj") or "")
+            old_doc = re.sub(r"\D", "", existing.cliente_cpf_cnpj or "")
+            if new_doc and not (len(new_doc) <= 11 and len(old_doc) == 14):
+                existing.cliente_cpf_cnpj = new_doc or existing.cliente_cpf_cnpj
         else:
             # Portal: atualiza placa se o portal a encontrou (API S&D retorna finalPlate)
             existing.placa = data.get("placa") or existing.placa
