@@ -1260,9 +1260,10 @@ async def run_metabase_sync(full: bool = False) -> dict:
 
     importados = 0
     novas_entregas: list[dict] = []
+    BATCH_SIZE = 200  # commit a cada 200 registros — dados ficam visíveis progressivamente
 
     async with SessionLocal() as session:
-        for c in contratos:
+        for i, c in enumerate(contratos):
             cpf    = c.get("cliente_cpf_cnpj", "")
             fonte  = c.get("fonte", "")
             id_ext = c.get("id_externo", "")
@@ -1277,7 +1278,13 @@ async def run_metabase_sync(full: bool = False) -> dict:
 
             await _upsert_contrato(session, c, portal_update=True)
             importados += 1
-        await session.commit()
+
+            # Commit parcial a cada BATCH_SIZE — torna dados visíveis para outros readers
+            # enquanto o sync ainda está rodando (evita race condition com S&D sync)
+            if (i + 1) % BATCH_SIZE == 0:
+                await session.commit()
+
+        await session.commit()  # commit final do resto
 
     # Notifica Byetech sobre novas entregas detectadas via Metabase
     if novas_entregas:
