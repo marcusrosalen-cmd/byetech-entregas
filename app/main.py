@@ -2280,7 +2280,35 @@ async def debug_pendentes_por_fonte(token: str = ""):
             for r in res2.all()
         ]
 
-    return {"pendentes_por_fonte": pendentes, "vw_amostra": vw_sample}
+    # Roda a query EXATA do run_signanddrive_sync para diagnóstico
+    res3 = await s.execute(
+        select(func.count()).select_from(Contrato).where(
+            and_(
+                Contrato.fonte.in_(["SIGN & DRIVE", "VW", "GWM"]),
+                Contrato.data_entrega_definitiva.is_(None),
+            )
+        )
+    )
+    sd_query_count = res3.scalar()
+
+    # Amostra de IDs encontrados pela query S&D
+    res4 = await s.execute(
+        select(Contrato.id, Contrato.fonte, Contrato.cliente_cpf_cnpj)
+        .where(
+            and_(
+                Contrato.fonte.in_(["SIGN & DRIVE", "VW", "GWM"]),
+                Contrato.data_entrega_definitiva.is_(None),
+            )
+        )
+        .limit(5)
+    )
+    sd_sample = [{"id": r[0], "fonte": r[1], "doc": r[2]} for r in res4.all()]
+
+    return {
+        "pendentes_por_fonte": pendentes,
+        "vw_amostra": vw_sample,
+        "sd_query_exata": {"count": sd_query_count, "amostra": sd_sample},
+    }
 
 
 
