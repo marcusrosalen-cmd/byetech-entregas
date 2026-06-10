@@ -61,7 +61,8 @@ def _contrato_id(fonte: str, id_externo: str, cpf: str) -> str:
 # Overrides manuais de fonte para contratos específicos.
 # O ID gerado (FONTE_ID) permanece o mesmo, mas a coluna `fonte` exibida é substituída.
 _FONTE_OVERRIDES: dict[str, str] = {
-    "LOCALIZA_15643": "UNIDAS",  # Contrato de teste Marcus Rosalen
+    "LOCALIZA_15643":  "UNIDAS",  # Contrato de teste Marcus Rosalen (anterior)
+    "LOCALIZA_130997": "UNIDAS",  # Contrato de teste Marcus Rosalen - Haval H6 PHEV19
 }
 
 
