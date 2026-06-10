@@ -31,15 +31,23 @@ LOCADORA_MAP = [
 # Prazo padrão (em dias) por locadora quando previsao_entrega não está cadastrado.
 # Baseado na média histórica dos contratos ativos de cada locadora.
 PRAZO_PADRAO_DIAS: dict[str, int] = {
-    "MOVIDA":      83,
-    "UNIDAS":      81,
-    "LOCALIZA":    95,
-    "SIGN & DRIVE": 48,
-    "VW":          47,
-    "FLUA":        66,
-    "LM":          41,
-    "GWM":         71,
-    "NISSAN":      90,
+    "MOVIDA":             83,
+    "UNIDAS":             81,
+    "LOCALIZA":           95,
+    "SIGN & DRIVE":       48,
+    "VW":                 47,
+    "FLUA":               66,
+    "LM":                 41,
+    "GWM":                71,
+    "NISSAN":             90,
+    # Locadoras parceiras / outros canais — prazo estimado conservador
+    "TOOT":               60,
+    "USECAR":             60,
+    "BYECAR":             60,
+    "RENAULT ON DEMAND":  60,
+    "KINTO ONE PERSONAL": 60,
+    "V1":                 60,
+    "CARRO FACIL":        60,
 }
 
 def map_locadora(nome: str) -> str:

@@ -2313,6 +2313,91 @@ async def debug_pendentes_por_fonte(token: str = ""):
 
 
 # ── API: Limpeza de registros obsoletos ──────────────────
+@app.post("/api/admin/fix-incompletos")
+async def fix_contratos_incompletos(token: str = ""):
+    """
+    Corrige contratos incompletos no banco:
+    1. Remove registros GWM fantasmas (criados por scanner de portal, sem nome/data)
+    2. Aplica prazo padrão para contratos com data_venda mas sem data_prevista
+    3. Aplica prazo padrão S&D para contratos sem data_venda (usa data criação)
+    """
+    if token != "byetech-entregas":
+        raise HTTPException(403, "token invalido")
+
+    from datetime import timedelta
+    import re as _re
+
+    PRAZO_MAP = {
+        "MOVIDA": 83, "UNIDAS": 81, "LOCALIZA": 95, "SIGN & DRIVE": 48,
+        "VW": 47, "FLUA": 66, "LM": 41, "GWM": 71, "NISSAN": 90,
+        "TOOT": 60, "USECAR": 60, "BYECAR": 60, "RENAULT ON DEMAND": 60,
+        "KINTO ONE PERSONAL": 60, "V1": 60, "CARRO FACIL": 60,
+    }
+
+    removidos = 0
+    datas_aplicadas = 0
+
+    async with SessionLocal() as s:
+        # 1. Remove GWM fantasmas (sem nome, sem status, sem data_venda — criados por scanner)
+        res = await s.execute(
+            select(Contrato).where(
+                and_(
+                    Contrato.fonte == "GWM",
+                    Contrato.data_entrega_definitiva.is_(None),
+                    or_(Contrato.cliente_nome == None, Contrato.cliente_nome == ""),
+                    Contrato.status_atual == "",
+                    Contrato.data_venda.is_(None),
+                )
+            )
+        )
+        fantasmas = res.scalars().all()
+        for c in fantasmas:
+            # Só remove se o id é baseado em CPF (não num ID Metabase)
+            suffix = (c.id or "").replace("GWM_", "")
+            if suffix.isdigit() and len(suffix) in (10, 11):
+                await s.delete(c)
+                removidos += 1
+
+        # 2. Aplica prazo padrão para contratos com data_venda mas sem data_prevista
+        res2 = await s.execute(
+            select(Contrato).where(
+                and_(
+                    Contrato.data_entrega_definitiva.is_(None),
+                    Contrato.data_prevista_entrega.is_(None),
+                    Contrato.data_venda.is_not(None),
+                )
+            )
+        )
+        for c in res2.scalars().all():
+            prazo = PRAZO_MAP.get(c.fonte)
+            if prazo:
+                c.data_prevista_entrega = c.data_venda + timedelta(days=prazo)
+                datas_aplicadas += 1
+
+        # 3. S&D sem data_venda — usa data de criação + 48 dias
+        res3 = await s.execute(
+            select(Contrato).where(
+                and_(
+                    Contrato.fonte == "SIGN & DRIVE",
+                    Contrato.data_entrega_definitiva.is_(None),
+                    Contrato.data_prevista_entrega.is_(None),
+                )
+            )
+        )
+        for c in res3.scalars().all():
+            base = c.criado_em or datetime.utcnow()
+            c.data_prevista_entrega = base + timedelta(days=48)
+            datas_aplicadas += 1
+
+        await s.commit()
+
+    return {
+        "ok": True,
+        "gwm_fantasmas_removidos": removidos,
+        "datas_previstas_aplicadas": datas_aplicadas,
+    }
+
+
 @app.post("/api/admin/cleanup-stale")
 async def cleanup_stale_contratos(db: AsyncSession = Depends(get_db), _auth=Depends(require_auth)):
     """
