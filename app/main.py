@@ -2398,6 +2398,90 @@ async def fix_contratos_incompletos(token: str = ""):
     }
 
 
+@app.post("/api/admin/deduplicar")
+async def deduplicar_contratos(token: str = ""):
+    """
+    Remove registros duplicados (mesmo CPF+fonte sem entrega).
+    Mantém o de melhor data prevista; remove os extras.
+    Também corrige datas absurdas (ano > 2030).
+    """
+    if token != "byetech-entregas":
+        raise HTTPException(403, "token invalido")
+
+    from datetime import timedelta
+    from sqlalchemy import func as _func
+
+    DATA_MAX   = datetime(2030, 12, 31)
+    CORTE_ZOMBIE = datetime.utcnow() - timedelta(days=365)
+
+    removidos_dup = 0
+    datas_corrigidas = 0
+
+    async with SessionLocal() as s:
+        # 1. Encontra grupos com duplicatas
+        res = await s.execute(
+            select(Contrato.cliente_cpf_cnpj, Contrato.fonte, _func.count().label("n"))
+            .where(and_(
+                Contrato.data_entrega_definitiva.is_(None),
+                Contrato.cliente_cpf_cnpj != None,
+                Contrato.cliente_cpf_cnpj != "",
+            ))
+            .group_by(Contrato.cliente_cpf_cnpj, Contrato.fonte)
+            .having(_func.count() > 1)
+        )
+        grupos = res.all()
+
+        for cpf, fonte, _ in grupos:
+            res2 = await s.execute(
+                select(Contrato)
+                .where(and_(
+                    Contrato.cliente_cpf_cnpj == cpf,
+                    Contrato.fonte == fonte,
+                    Contrato.data_entrega_definitiva.is_(None),
+                ))
+                .order_by(
+                    Contrato.data_prevista_entrega.desc().nulls_last(),
+                    Contrato.criado_em.desc().nulls_last(),
+                )
+            )
+            todos = res2.scalars().all()
+            for c in todos[1:]:
+                await s.delete(c)
+                removidos_dup += 1
+
+        # 2. Corrige datas absurdas
+        res3 = await s.execute(
+            select(Contrato).where(
+                and_(
+                    Contrato.data_entrega_definitiva.is_(None),
+                    Contrato.data_prevista_entrega > DATA_MAX,
+                )
+            )
+        )
+        for c in res3.scalars().all():
+            c.data_prevista_entrega = None
+            datas_corrigidas += 1
+
+        await s.commit()
+
+    # Contagem final
+    async with SessionLocal() as s:
+        total = (await s.execute(select(func.count()).select_from(Contrato))).scalar()
+        pend  = (await s.execute(
+            select(func.count()).select_from(Contrato)
+            .where(Contrato.data_entrega_definitiva.is_(None))
+        )).scalar()
+
+    return {
+        "ok": True,
+        "duplicatas_removidas": removidos_dup,
+        "datas_absurdas_corrigidas": datas_corrigidas,
+        "total_contratos": total,
+        "pendentes": pend,
+        "entregues": total - pend,
+    }
+
+
 @app.post("/api/admin/cleanup-stale")
 async def cleanup_stale_contratos(db: AsyncSession = Depends(get_db), _auth=Depends(require_auth)):
     """
