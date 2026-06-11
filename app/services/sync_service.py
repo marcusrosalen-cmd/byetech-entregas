@@ -888,25 +888,10 @@ async def run_signanddrive_sync(
             )
         )
         contratos_db = res.scalars().all()
-        logger.info(
-            f"[S&D] query retornou {len(contratos_db)} contratos "
-            f"(fontes={fontes}, sem data_entrega)"
-        )
+        logger.info(f"Sign & Drive: {len(contratos_db)} contratos pendentes no banco")
 
     if not contratos_db:
-        # Log diagnóstico adicional para identificar por que a query retorna vazio
-        async with SessionLocal() as _s:
-            from sqlalchemy import func as _func
-            total = (await _s.execute(select(_func.count()).select_from(Contrato))).scalar()
-            por_fonte = dict((await _s.execute(
-                select(Contrato.fonte, _func.count())
-                .where(Contrato.data_entrega_definitiva.is_(None))
-                .group_by(Contrato.fonte)
-            )).all())
-        logger.warning(
-            f"[S&D] ZERO contratos encontrados. Total no banco={total}. "
-            f"Pendentes por fonte (amostra): { {k: v for k, v in list(por_fonte.items())[:5]} }"
-        )
+        logger.info("Sign & Drive: nenhum contrato pendente no banco")
         return resultado
 
     import re as _re
@@ -1293,7 +1278,9 @@ async def run_metabase_sync(full: bool = False) -> dict:
                 if de_dt >= corte_notificacao:
                     novas_entregas.append(c)
 
-            await _upsert_contrato(session, c, portal_update=True)
+            # portal_update=False: Metabase é fonte de verdade para nome, CPF, veículo
+            # (dados vêm diretamente do BD do Byetech CRM via Metabase)
+            await _upsert_contrato(session, c, portal_update=False)
             importados += 1
 
             # Commit parcial a cada BATCH_SIZE — torna dados visíveis para outros readers

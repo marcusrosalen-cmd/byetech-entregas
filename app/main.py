@@ -140,6 +140,7 @@ async def _startup_metabase_sync():
     """
     Roda Metabase sync no startup para garantir dados atualizados.
     Se o banco estiver vazio (reinício após deploy), faz sync completo automaticamente.
+    Após o sync, remove duplicatas geradas por múltiplos restarts.
     """
     await asyncio.sleep(5)
     try:
@@ -155,8 +156,63 @@ async def _startup_metabase_sync():
             result = await run_metabase_sync(full=False)
 
         logger.info(f"[startup] Metabase sync: {result.get('importados', 0)} contratos importados (banco={cnt})")
+
+        # Remove duplicatas geradas por múltiplos restarts (mesmo CPF+fonte)
+        await _deduplicar_banco()
+
     except Exception as e:
         logger.warning(f"[startup] Metabase sync nao disponivel: {e}")
+
+
+async def _deduplicar_banco():
+    """Remove registros duplicados (mesmo CPF+fonte sem entrega). Chamado no startup."""
+    from app.database import SessionLocal as _SL, Contrato as _C
+    from sqlalchemy import func as _f, and_ as _and, or_ as _or
+    try:
+        async with _SL() as s:
+            res = await s.execute(
+                select(_C.cliente_cpf_cnpj, _C.fonte, _f.count().label("n"))
+                .where(_and(
+                    _C.data_entrega_definitiva.is_(None),
+                    _C.cliente_cpf_cnpj != None,
+                    _C.cliente_cpf_cnpj != "",
+                ))
+                .group_by(_C.cliente_cpf_cnpj, _C.fonte)
+                .having(_f.count() > 1)
+            )
+            grupos = res.all()
+            removidos = 0
+            for cpf, fonte, _ in grupos:
+                res2 = await s.execute(
+                    select(_C).where(_and(
+                        _C.cliente_cpf_cnpj == cpf,
+                        _C.fonte == fonte,
+                        _C.data_entrega_definitiva.is_(None),
+                    ))
+                    .order_by(
+                        _C.data_prevista_entrega.desc().nulls_last(),
+                        _C.criado_em.desc().nulls_last(),
+                    )
+                )
+                todos = res2.scalars().all()
+                for c in todos[1:]:
+                    await s.delete(c)
+                    removidos += 1
+            # Corrige datas absurdas (ano > 2030)
+            from datetime import datetime as _dt
+            res3 = await s.execute(
+                select(_C).where(_and(
+                    _C.data_entrega_definitiva.is_(None),
+                    _C.data_prevista_entrega > _dt(2030, 12, 31),
+                ))
+            )
+            for c in res3.scalars().all():
+                c.data_prevista_entrega = None
+            await s.commit()
+            if removidos:
+                logger.info(f"[startup] Deduplicacao: {removidos} registros duplicados removidos")
+    except Exception as e:
+        logger.warning(f"[startup] Deduplicacao falhou: {e}")
 
 
 app = FastAPI(title="Byetech Entregas", lifespan=lifespan)
@@ -1690,19 +1746,6 @@ async def sync_signanddrive(body: SdSyncBody | None = None):
             iniciado_em=datetime.utcnow().isoformat(),
         )
         try:
-            # Diagnóstico: conta S&D/VW/GWM pendentes ANTES de chamar o sync
-            async with SessionLocal() as _ds:
-                from sqlalchemy import func as _f
-                _cnt = (await _ds.execute(
-                    select(_f.count()).select_from(Contrato).where(
-                        and_(
-                            Contrato.fonte.in_(["SIGN & DRIVE", "VW", "GWM"]),
-                            Contrato.data_entrega_definitiva.is_(None),
-                        )
-                    )
-                )).scalar()
-                logger.info(f"[SD_DIAG] Antes do sync: {_cnt} contratos S&D/VW/GWM pendentes no banco")
-
             resultado = await run_signanddrive_sync(fontes=body.fontes if body else None)
             n_ent = len(resultado.get("entregues", []))
             n_mud = len(resultado.get("mudancas_status", []))
