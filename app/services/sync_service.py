@@ -888,9 +888,25 @@ async def run_signanddrive_sync(
             )
         )
         contratos_db = res.scalars().all()
+        logger.info(
+            f"[S&D] query retornou {len(contratos_db)} contratos "
+            f"(fontes={fontes}, sem data_entrega)"
+        )
 
     if not contratos_db:
-        logger.info("Sign & Drive: nenhum contrato pendente no banco")
+        # Log diagnóstico adicional para identificar por que a query retorna vazio
+        async with SessionLocal() as _s:
+            from sqlalchemy import func as _func
+            total = (await _s.execute(select(_func.count()).select_from(Contrato))).scalar()
+            por_fonte = dict((await _s.execute(
+                select(Contrato.fonte, _func.count())
+                .where(Contrato.data_entrega_definitiva.is_(None))
+                .group_by(Contrato.fonte)
+            )).all())
+        logger.warning(
+            f"[S&D] ZERO contratos encontrados. Total no banco={total}. "
+            f"Pendentes por fonte (amostra): { {k: v for k, v in list(por_fonte.items())[:5]} }"
+        )
         return resultado
 
     import re as _re
