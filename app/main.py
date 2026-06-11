@@ -1690,6 +1690,19 @@ async def sync_signanddrive(body: SdSyncBody | None = None):
             iniciado_em=datetime.utcnow().isoformat(),
         )
         try:
+            # Diagnóstico: conta S&D/VW/GWM pendentes ANTES de chamar o sync
+            async with SessionLocal() as _ds:
+                from sqlalchemy import func as _f
+                _cnt = (await _ds.execute(
+                    select(_f.count()).select_from(Contrato).where(
+                        and_(
+                            Contrato.fonte.in_(["SIGN & DRIVE", "VW", "GWM"]),
+                            Contrato.data_entrega_definitiva.is_(None),
+                        )
+                    )
+                )).scalar()
+                logger.info(f"[SD_DIAG] Antes do sync: {_cnt} contratos S&D/VW/GWM pendentes no banco")
+
             resultado = await run_signanddrive_sync(fontes=body.fontes if body else None)
             n_ent = len(resultado.get("entregues", []))
             n_mud = len(resultado.get("mudancas_status", []))
