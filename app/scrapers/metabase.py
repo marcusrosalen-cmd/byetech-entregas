@@ -105,18 +105,25 @@ def _row_to_contrato(row: dict) -> dict:
 
     data_prevista = None
 
-    # Fonte 1 (mais confiável): previsao_entrega (INT dias) + data_venda
-    # Vem direto da tabela pedidos — mesma base que o Byetech exibe ao usuário.
-    previsao_dias = row.get("previsao_entrega")
-    if _data_venda and previsao_dias is not None:
-        try:
-            dias = int(previsao_dias)
-            if dias > 0:
-                data_prevista = _data_venda + timedelta(days=dias)
-        except (ValueError, TypeError):
-            pass
+    # Fonte 1 (mais confiável): campo previsao_entrega do card
+    # O card CONTRATOS_ATIVOS retorna previsao_entrega como DATE computada:
+    #   date(DATE_ADD(data_venda, INTERVAL previsao_entrega DAY)) AS previsao_entrega
+    # Queries MCP diretas retornam como INT (número de dias).
+    # Tratamos os dois casos.
+    previsao_raw = row.get("previsao_entrega")
+    if previsao_raw is not None:
+        # Tenta como DATE (formato do card público — valor já calculado)
+        data_prevista = _parse_date(previsao_raw)
+        if not data_prevista and _data_venda:
+            # Tenta como INT dias (formato MCP/query direta)
+            try:
+                dias = int(previsao_raw)
+                if dias > 0:
+                    data_prevista = _data_venda + timedelta(days=dias)
+            except (ValueError, TypeError):
+                pass
 
-    # Fonte 2: coluna pré-computada vinda do card (data_prevista_entrega ou data_previsao_entrega)
+    # Fonte 2: coluna pré-computada com nome diferente (data_prevista_entrega)
     if not data_prevista:
         data_prevista = (
             _parse_date(row.get("data_prevista_entrega"))
