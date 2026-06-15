@@ -9,7 +9,28 @@ load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./byetech.db")
 
-engine = create_async_engine(DATABASE_URL, echo=False)
+# Render/Neon exportam "postgres://" — SQLAlchemy precisa de "postgresql+asyncpg://"
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
+elif DATABASE_URL.startswith("postgresql://") and "+asyncpg" not in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+# asyncpg usa ?ssl= em vez de ?sslmode=
+if "sslmode=require" in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace("sslmode=require", "ssl=require")
+
+_IS_SQLITE = DATABASE_URL.startswith("sqlite")
+
+if _IS_SQLITE:
+    engine = create_async_engine(
+        DATABASE_URL, echo=False,
+        connect_args={"check_same_thread": False},
+    )
+else:
+    engine = create_async_engine(
+        DATABASE_URL, echo=False,
+        pool_size=5, max_overflow=10, pool_pre_ping=True,
+    )
+
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
