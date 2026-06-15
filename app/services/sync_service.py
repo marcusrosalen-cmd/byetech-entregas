@@ -148,9 +148,11 @@ async def _upsert_contrato(session: AsyncSession, data: dict, portal_update: boo
             # Portal: atualiza placa se o portal a encontrou (API S&D retorna finalPlate)
             existing.placa = data.get("placa") or existing.placa
 
-        # Calcula dias
-        if existing.data_prevista_entrega:
-            delta = (existing.data_prevista_entrega.date() - datetime.now().date())
+        # Calcula dias — nova_previsao_entrega (override manual) tem prioridade
+        effective_dp = existing.nova_previsao_entrega or existing.data_prevista_entrega
+        if effective_dp:
+            effective_date = effective_dp.date() if isinstance(effective_dp, datetime) else effective_dp
+            delta = effective_date - datetime.now().date()
             existing.dias_para_entrega = delta.days
             existing.atrasado = delta.days < 0
 

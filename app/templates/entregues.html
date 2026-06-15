@@ -453,10 +453,13 @@
   <!-- ── PAINEL: PENDENTES BYETECH ── -->
   <div class="tab-panel" id="panel-pendentes">
 
-    <div class="pend-info">
-      <strong>⚠ Contorno manual:</strong> estes contratos foram marcados como entregues no sistema,
+    <div class="pend-info" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+      <span><strong>⚠ Contorno manual:</strong> estes contratos foram marcados como entregues no sistema,
       mas a atualização automática no Byetech CRM falhou (sessão expirada ou CPF não localizado).
-      O analista deve abrir o Byetech, atualizar manualmente e clicar em <strong>✓ Feito</strong>.
+      O analista deve abrir o Byetech, atualizar manualmente e clicar em <strong>✓ Feito</strong>.</span>
+      <button id="btn-verificar-todos" onclick="verificarTodos()" style="padding:6px 14px;border-radius:6px;border:1px solid var(--green);background:rgba(34,197,94,.1);color:var(--green);cursor:pointer;font-size:13px;white-space:nowrap">
+        🔍 Verificar todos no Byetech
+      </button>
     </div>
 
     <div class="pend-table-wrap">
@@ -847,6 +850,29 @@ async function marcarFeito(pid) {
     btn.disabled = false;
     btn.textContent = '✓ Feito';
     alert('Erro ao marcar: ' + e.message);
+  }
+}
+
+async function verificarTodos() {
+  const btn = document.getElementById('btn-verificar-todos');
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = '🔍 Verificando…';
+  try {
+    const res = await fetch('/api/byetech/pendentes/verificar', { method: 'POST' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const d = await res.json();
+    const msg = d.auto_resolvidos > 0
+      ? `✓ ${d.auto_resolvidos} já estavam atualizados no Byetech e foram removidos.\nRestam ${d.restantes} pendente(s).`
+      : `Nenhum novo resolvido automaticamente.\nRestam ${d.restantes} pendente(s).`;
+    alert(msg);
+    await loadPendentes();
+    updatePendBadge(d.restantes);
+  } catch(e) {
+    alert('Erro: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔍 Verificar todos no Byetech';
   }
 }
 

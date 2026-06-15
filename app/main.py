@@ -277,8 +277,8 @@ async def get_contratos(db: AsyncSession = Depends(get_db), _auth=Depends(requir
     contratos_list = []
     for c in contratos:
         dias = None
-        # Usa nova_previsao_entrega como fallback quando data_prevista_entrega é nula
-        previsao = c.data_prevista_entrega or c.nova_previsao_entrega
+        # nova_previsao_entrega (override manual) tem prioridade sobre data_prevista_entrega (Metabase)
+        previsao = c.nova_previsao_entrega or c.data_prevista_entrega
         if previsao:
             dp = previsao
             if isinstance(dp, datetime):
@@ -1119,6 +1119,44 @@ async def marcar_pendente_processado(
 
     await db.commit()
     return {"ok": True}
+
+
+@app.post("/api/byetech/pendentes/verificar")
+async def verificar_pendentes_byetech(db: AsyncSession = Depends(get_db), _auth=Depends(require_auth)):
+    """
+    Cross-check automático: marca como processados os pendentes cujo contrato
+    já tem data_entrega_definitiva no banco local (importada do Metabase/Byetech).
+    Se o Byetech já registrou a entrega, o Metabase a reflete → nosso banco a importou
+    → não precisa de atualização manual.
+    """
+    res = await db.execute(
+        select(ByetechPendente).where(ByetechPendente.processado_em.is_(None))
+    )
+    pendentes = res.scalars().all()
+
+    auto_resolvidos = 0
+    for p in pendentes:
+        res_c = await db.execute(
+            select(Contrato).where(
+                and_(
+                    Contrato.id == p.contrato_id,
+                    Contrato.data_entrega_definitiva.is_not(None),
+                )
+            )
+        )
+        if res_c.scalar_one_or_none():
+            p.processado_em = datetime.utcnow()
+            p.erro_ultimo = "Auto-verificado: entrega ja registrada no Byetech/Metabase"
+            auto_resolvidos += 1
+
+    await db.commit()
+
+    res_rem = await db.execute(
+        select(func.count()).select_from(ByetechPendente).where(ByetechPendente.processado_em.is_(None))
+    )
+    restantes = res_rem.scalar()
+
+    return {"ok": True, "auto_resolvidos": auto_resolvidos, "restantes": restantes}
 
 
 @app.get("/api/byetech/sessao-ok")
