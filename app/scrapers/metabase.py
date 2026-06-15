@@ -97,47 +97,44 @@ def _row_to_contrato(row: dict) -> dict:
         cpf_cnpj = ""
 
     # ── data_prevista_entrega ─────────────────────────────────────────────────
-    # Tenta ler como coluna calculada (formato MCP: data_prevista_entrega ou data_previsao_entrega)
-    data_prevista = (
-        _parse_date(row.get("data_prevista_entrega"))
-        or _parse_date(row.get("data_previsao_entrega"))
+    # data_venda pode vir com nome literal "date(pedidos.data_venda)" do card público
+    _data_venda = (
+        _parse_date(row.get("data_venda"))
+        or _parse_date(row.get("date(pedidos.data_venda)"))
     )
 
-    # Fallback 1: calcula a partir de data_venda + previsao_entrega (INT dias)
-    # Necessário quando o card público retorna previsao_entrega como INT
-    if not data_prevista:
-        # data_venda pode vir com nome literal "date(pedidos.data_venda)" do card público
-        data_venda = (
-            _parse_date(row.get("data_venda"))
-            or _parse_date(row.get("date(pedidos.data_venda)"))
-        )
-        previsao_dias = row.get("previsao_entrega")
-        if data_venda and previsao_dias is not None:
-            try:
-                data_prevista = data_venda + timedelta(days=int(previsao_dias))
-            except (ValueError, TypeError):
-                data_prevista = None
+    data_prevista = None
 
-    # Fallback 2: previsao_entrega não cadastrado — usa prazo médio da locadora
-    # Garante que todos os contratos ativos tenham data_prevista_entrega
+    # Fonte 1 (mais confiável): previsao_entrega (INT dias) + data_venda
+    # Vem direto da tabela pedidos — mesma base que o Byetech exibe ao usuário.
+    previsao_dias = row.get("previsao_entrega")
+    if _data_venda and previsao_dias is not None:
+        try:
+            dias = int(previsao_dias)
+            if dias > 0:
+                data_prevista = _data_venda + timedelta(days=dias)
+        except (ValueError, TypeError):
+            pass
+
+    # Fonte 2: coluna pré-computada vinda do card (data_prevista_entrega ou data_previsao_entrega)
     if not data_prevista:
-        data_venda_fb = (
-            _parse_date(row.get("data_venda"))
-            or _parse_date(row.get("date(pedidos.data_venda)"))
+        data_prevista = (
+            _parse_date(row.get("data_prevista_entrega"))
+            or _parse_date(row.get("data_previsao_entrega"))
         )
+
+    # Fonte 3: prazo médio da locadora — último recurso quando previsao_entrega não está cadastrado
+    if not data_prevista and _data_venda:
         padrao_dias = PRAZO_PADRAO_DIAS.get(fonte)
-        if data_venda_fb and padrao_dias:
-            data_prevista = data_venda_fb + timedelta(days=padrao_dias)
+        if padrao_dias:
+            data_prevista = _data_venda + timedelta(days=padrao_dias)
             logger.debug(
-                f"[metabase] prazo padrão {padrao_dias}d aplicado para {fonte} "
+                f"[metabase] prazo padrao {padrao_dias}d aplicado para {fonte} "
                 f"(id={row.get('id')}, previsao_entrega ausente)"
             )
 
     # ── data_venda ────────────────────────────────────────────────────────────
-    data_venda_dt = (
-        _parse_date(row.get("data_venda"))
-        or _parse_date(row.get("date(pedidos.data_venda)"))
-    )
+    data_venda_dt = _data_venda
 
     # O card público retorna id=c.id (contrato) e pedido_id=p.id (pedido).
     # O MCP retorna apenas p.id como "id".
