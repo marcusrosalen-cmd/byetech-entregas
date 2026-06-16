@@ -1265,6 +1265,7 @@ async def run_metabase_sync(full: bool = False) -> dict:
     importados = 0
     novas_entregas: list[dict] = []
     BATCH_SIZE = 200  # commit a cada 200 registros — dados ficam visíveis progressivamente
+    card_ids: list[str] = []  # IDs de contratos vistos no card desta sync
 
     async with SessionLocal() as session:
         for i, c in enumerate(contratos):
@@ -1273,6 +1274,8 @@ async def run_metabase_sync(full: bool = False) -> dict:
             id_ext = c.get("id_externo", "")
             cid    = _contrato_id(fonte, id_ext, cpf)
             de     = c.get("data_entrega_definitiva")
+
+            card_ids.append(cid)
 
             # Transição para entregue: contrato existente sem entrega que agora tem data
             if de and cpf and cid not in ja_entregues:
@@ -1291,6 +1294,31 @@ async def run_metabase_sync(full: bool = False) -> dict:
                 await session.commit()
 
         await session.commit()  # commit final do resto
+
+        # Reconciliação: contratos que saíram do card (entregues/cancelados no Metabase)
+        # ficam com ativo=False e somem da contagem de ativos.
+        # Guard: só executa se o card retornou um número razoável (evita desativar tudo numa falha)
+        if importados > 500:
+            from sqlalchemy import update as _upd
+            # Passo 1: todos sem entrega definitiva → inativo
+            await session.execute(
+                _upd(Contrato)
+                .where(Contrato.data_entrega_definitiva.is_(None))
+                .values(ativo=False)
+            )
+            # Passo 2: contratos do card atual → ativo (em chunks de 900 para SQLite)
+            CHUNK = 900
+            for j in range(0, len(card_ids), CHUNK):
+                chunk = card_ids[j:j + CHUNK]
+                await session.execute(
+                    _upd(Contrato).where(Contrato.id.in_(chunk)).values(ativo=True)
+                )
+            await session.commit()
+            inativos = len([c for c in contratos if not c.get("data_entrega_definitiva")])
+            logger.info(
+                f"[Metabase] Reconciliação: {importados} no card → ativo=True; "
+                f"contratos fora do card marcados ativo=False"
+            )
 
     # Notifica Byetech sobre novas entregas detectadas via Metabase
     if novas_entregas:

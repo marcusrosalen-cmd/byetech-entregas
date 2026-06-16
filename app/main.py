@@ -258,6 +258,7 @@ async def get_contratos(db: AsyncSession = Depends(get_db), _auth=Depends(requir
         select(Contrato)
         .where(
             Contrato.data_entrega_definitiva.is_(None),
+            Contrato.ativo != False,  # noqa: E712 — exclui contratos removidos do card Metabase
             or_(
                 Contrato.status_atual.is_(None),
                 Contrato.status_atual.notin_(_STATUS_EXCLUIDOS),

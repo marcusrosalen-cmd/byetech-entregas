@@ -62,6 +62,7 @@ class Contrato(Base):
     pedido_id_locadora = Column(Integer)           # ID do pedido interno Byetech (do Metabase)
     pedido_portal_id   = Column(String)            # ID do pedido no portal da locadora (ex: GWM12345, SDI678)
     vendedor = Column(String)                       # Vendedor responsável (usuario_atribuido do Metabase)
+    ativo = Column(Boolean, default=True)           # False = saiu do card Metabase (entregue/cancelado lá)
     ultima_atualizacao = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     criado_em = Column(DateTime, default=datetime.utcnow)
 
@@ -126,6 +127,7 @@ async def init_db():
             "ALTER TABLE contratos ADD COLUMN nova_previsao_entrega DATETIME",
             "ALTER TABLE contratos ADD COLUMN pedido_portal_id VARCHAR",
             "ALTER TABLE contratos ADD COLUMN vendedor VARCHAR",
+            "ALTER TABLE contratos ADD COLUMN ativo INTEGER DEFAULT 1",
         ]:
             try:
                 await conn.execute(text(stmt))
