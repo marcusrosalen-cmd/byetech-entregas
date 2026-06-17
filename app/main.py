@@ -1254,6 +1254,43 @@ async def processar_pendentes_byetech(
     }
 
 
+@app.post("/api/byetech/rebuild-and-flush")
+async def rebuild_and_flush_byetech(body: ProcessarPendentesBody):
+    """
+    Reconstrói o mapa CPF usando a sessão em memória do servidor e processa todos os pendentes.
+    Útil quando o servidor tem sessão válida (carregada do disco no boot) mas o mapa CPF ainda
+    não foi construído — situação que ocorre quando a sessão não veio via push-session.
+    """
+    _secret = os.getenv("SESSION_PUSH_SECRET", "byetech-local")
+    if body.secret != _secret:
+        raise HTTPException(401, "Secret inválido")
+
+    from app.scrapers.byetech_crm import _test_session, get_session
+    cookies = await get_session()
+    if not cookies:
+        raise HTTPException(503, "Nenhuma sessão Byetech disponível no servidor — faça push-session primeiro")
+
+    ok = await _test_session(cookies)
+    if not ok:
+        raise HTTPException(503, "Sessão Byetech em memória está expirada — faça push-session ou renovar-sessao")
+
+    pending = await _get_pending_count()
+
+    async def _rebuild_and_process():
+        logger.info("[Byetech] rebuild-and-flush: reconstruindo mapa CPF...")
+        n = await _rebuild_cpf_map()
+        logger.info(f"[Byetech] Mapa CPF pronto ({n} contratos). Processando {pending} pendentes...")
+        await _flush_byetech_pending()
+
+    asyncio.create_task(_rebuild_and_process())
+
+    return {
+        "ok": True,
+        "message": f"Sessão válida. Reconstruindo mapa CPF e processando {pending} pendente(s) em background.",
+        "pending_count": pending,
+    }
+
+
 @app.get("/api/byetech/sessao-ok")
 async def byetech_sessao_ok():
     """
