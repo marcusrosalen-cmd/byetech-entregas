@@ -1173,6 +1173,87 @@ async def verificar_pendentes_byetech(db: AsyncSession = Depends(get_db), _auth=
     return {"ok": True, "auto_resolvidos": auto_resolvidos, "restantes": restantes}
 
 
+class ProcessarPendentesBody(BaseModel):
+    secret: str
+    max_itens: int = 50
+
+
+@app.post("/api/byetech/pendentes/processar")
+async def processar_pendentes_byetech(
+    body: ProcessarPendentesBody,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Processa a fila de pendentes Byetech usando a sessão em memória do servidor.
+    Alternativa ao _processar_pendentes_local.py quando a sessão local está expirada.
+    Requer o secret SESSION_PUSH_SECRET para evitar uso não autorizado.
+    """
+    _secret = os.getenv("SESSION_PUSH_SECRET", "byetech-local")
+    if body.secret != _secret:
+        raise HTTPException(401, "Secret inválido")
+
+    from app.scrapers.byetech_crm import update_delivery_by_cpf
+
+    res = await db.execute(
+        select(ByetechPendente)
+        .where(ByetechPendente.processado_em.is_(None))
+        .order_by(ByetechPendente.criado_em)
+        .limit(body.max_itens)
+    )
+    pendentes = res.scalars().all()
+
+    ok_count = 0
+    err_count = 0
+    skip_count = 0
+    resultados = []
+
+    for p in pendentes:
+        nome = (p.cliente_nome or "?")[:40]
+        try:
+            data_dt = p.data_entrega
+            if not data_dt:
+                p.processado_em = datetime.utcnow()
+                p.erro_ultimo = "data_entrega vazia — ignorado"
+                skip_count += 1
+                resultados.append({"id": p.id, "nome": nome, "status": "skip", "msg": "sem data"})
+                continue
+
+            ok = await update_delivery_by_cpf(
+                cpf_raw=p.cliente_cpf,
+                data_entrega=data_dt,
+                placa=p.placa,
+            )
+            if ok:
+                p.processado_em = datetime.utcnow()
+                p.erro_ultimo = None
+                ok_count += 1
+                resultados.append({"id": p.id, "nome": nome, "status": "ok", "data": data_dt.strftime("%Y-%m-%d")})
+            else:
+                p.tentativas = (p.tentativas or 0) + 1
+                p.erro_ultimo = "update_delivery_by_cpf retornou False"
+                err_count += 1
+                resultados.append({"id": p.id, "nome": nome, "status": "err", "msg": "False"})
+
+        except Exception as e:
+            err_msg = str(e)[:200]
+            p.tentativas = (p.tentativas or 0) + 1
+            p.erro_ultimo = err_msg
+            err_count += 1
+            resultados.append({"id": p.id, "nome": nome, "status": "err", "msg": err_msg})
+
+        await db.commit()
+        await asyncio.sleep(0.3)  # rate limit
+
+    return {
+        "ok": True,
+        "processados": ok_count,
+        "erros": err_count,
+        "ignorados": skip_count,
+        "total": len(pendentes),
+        "resultados": resultados,
+    }
+
+
 @app.get("/api/byetech/sessao-ok")
 async def byetech_sessao_ok():
     """
