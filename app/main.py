@@ -70,6 +70,19 @@ from app.auth import (
     require_auth, check_auth_cookie,
 )
 
+
+async def require_auth_or_secret(request: Request) -> bool:
+    """Auth: aceita cookie de sessão OU header X-Sync-Secret (para scripts locais)."""
+    from app.auth import validate_session
+    token = request.cookies.get(SESSION_COOKIE)
+    if token and validate_session(token):
+        return True
+    secret = os.getenv("SESSION_PUSH_SECRET", "byetech-local")
+    if request.headers.get("X-Sync-Secret", "") == secret:
+        return True
+    from fastapi import HTTPException
+    raise HTTPException(401, "Sessão expirada ou inválida — faça login ou passe X-Sync-Secret")
+
 from app.database import init_db, get_db, SessionLocal, Contrato, HistoricoStatus, AlertaEnviado, ByetechPendente
 from app.services.sync_service import (
     get_sync_state, provide_twofa, set_sync_state,
@@ -1058,7 +1071,7 @@ async def sync_status():
 
 # ── API: Fila Byetech pendentes ──────────────────────────
 @app.get("/api/byetech/pendentes")
-async def listar_pendentes(db: AsyncSession = Depends(get_db), _auth=Depends(require_auth)):
+async def listar_pendentes(db: AsyncSession = Depends(get_db), _auth=Depends(require_auth_or_secret)):
     """
     Lista todas as atualizações pendentes no Byetech CRM.
     Usado pelo script processar_pendentes.py para processar localmente.
