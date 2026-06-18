@@ -1245,6 +1245,102 @@ async def run_gwm_portaldealer_sync() -> dict:
     return resultado
 
 
+_STATUS_ENTREGUE_KEYWORDS = ("definitivo entregue", "veiculo entregue", "entregue")
+
+
+async def _cleanup_status_entregue_sem_data() -> int:
+    """
+    Contratos onde status indica entrega mas data_entrega_definitiva esta em branco
+    (dado inconsistente vindo do Metabase / portais).
+    Usa data_prevista_entrega como proxy para tirar do dashboard de atrasados.
+    NAO notifica Byetech — a data proxy nao e a data real da entrega.
+    Retorna quantidade de registros corrigidos.
+    """
+    from sqlalchemy import and_
+    async with SessionLocal() as s:
+        res = await s.execute(
+            select(Contrato).where(
+                and_(
+                    Contrato.data_entrega_definitiva.is_(None),
+                    Contrato.ativo != False,
+                )
+            )
+        )
+        candidates = res.scalars().all()
+
+    para_corrigir = [
+        c for c in candidates
+        if any(k in (c.status_atual or "").lower() for k in _STATUS_ENTREGUE_KEYWORDS)
+    ]
+    if not para_corrigir:
+        return 0
+
+    async with SessionLocal() as s:
+        for c in para_corrigir:
+            data_proxy = c.data_prevista_entrega or c.ultima_atualizacao or datetime.utcnow()
+            c.data_entrega_definitiva = data_proxy
+            c.ativo = False
+            c.ultima_atualizacao = datetime.utcnow()
+            s.add(c)
+        await s.commit()
+
+    logger.info(
+        f"[cleanup] {len(para_corrigir)} contrato(s) com status=entregue sem data corrigidos "
+        f"(data_prevista usada como proxy; Byetech NAO atualizado)"
+    )
+    return len(para_corrigir)
+
+
+async def _cleanup_duplicatas_cpf_veiculo() -> int:
+    """
+    CPFs com contrato ja entregue (data real do portal) + outro contrato pendente
+    para o mesmo veiculo — propaga a data de entrega confirmada para o pendente.
+    NAO notifica Byetech — a correcao e apenas no banco local para tirar do dashboard.
+    Retorna quantidade de registros corrigidos.
+    """
+    import re as _re
+    from collections import defaultdict
+
+    def _vnorm(v):
+        return _re.sub(r"\s+", " ", (v or "").upper().strip())[:30]
+
+    async with SessionLocal() as s:
+        res = await s.execute(select(Contrato).where(Contrato.ativo != False))
+        todos = res.scalars().all()
+
+    grupos: dict = defaultdict(list)
+    for c in todos:
+        cpf = _re.sub(r"\D", "", c.cliente_cpf_cnpj or "")
+        if not cpf or len(cpf) < 9:
+            continue
+        grupos[(cpf, _vnorm(c.veiculo))].append(c)
+
+    corrigidos = 0
+    async with SessionLocal() as s:
+        for cs in grupos.values():
+            entregues     = [c for c in cs if c.data_entrega_definitiva]
+            nao_entregues = [c for c in cs if not c.data_entrega_definitiva]
+            if not entregues or not nao_entregues:
+                continue
+            data_ref = max(c.data_entrega_definitiva for c in entregues)
+            for c in nao_entregues:
+                c.data_entrega_definitiva = data_ref
+                c.status_atual = "Definitivo entregue"
+                c.ativo = False
+                c.ultima_atualizacao = datetime.utcnow()
+                s.add(c)
+                corrigidos += 1
+        if corrigidos:
+            await s.commit()
+
+    if corrigidos:
+        logger.info(
+            f"[cleanup] {corrigidos} contrato(s) pendentes com mesmo CPF+veiculo ja entregue "
+            f"corrigidos (data real do portal; Byetech NAO atualizado)"
+        )
+    return corrigidos
+
+
 async def run_metabase_sync(full: bool = False) -> dict:
     """
     Sincroniza contratos do Metabase.
@@ -1368,6 +1464,10 @@ async def run_metabase_sync(full: bool = False) -> dict:
                 contrato_id=cid,
                 cliente_nome=c.get("cliente_nome", ""),
             ))
+
+    # Limpeza pós-sync: corrige inconsistências sem notificar Byetech
+    await _cleanup_status_entregue_sem_data()
+    await _cleanup_duplicatas_cpf_veiculo()
 
     logger.info(f"Metabase sync: {importados} contratos processados, {len(novas_entregas)} entrega(s) nova(s)")
     return {"importados": importados, "novas_entregas": len(novas_entregas)}

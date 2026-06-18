@@ -720,7 +720,7 @@ async def update_phase_by_cpf(
     # Fallback: busca o contrato diretamente na API Byetech pelo CPF
     if not entry:
         logger.info(f"[Byetech] Mapa CPF indisponível — buscando na API para CPF {cpf_norm[:6]}...")
-        entry = await _lookup_contrato_por_cpf(cpf_norm, digits, twofa_callback)
+        entry = await _lookup_contrato_por_cpf(cpf_norm, digits, twofa_callback, placa=None)
 
     if not entry:
         return False, f"cpf_nao_encontrado:{cpf_norm}"
@@ -750,13 +750,42 @@ async def update_phase_by_cpf(
     return True, f"ok:{phase_name}"
 
 
-async def _lookup_contrato_por_cpf(cpf_norm: str, digits: str, twofa_callback=None) -> Optional[dict]:
-    """
-    Busca um contrato na API Byetech pelo CPF quando o mapa local não existe.
-    Retorna um dict compatível com as entradas do cpf_map ou None.
+def _item_to_entry(item: dict) -> dict:
+    """Converte item da API Byetech para formato de entrada do cpf_map."""
+    return {
+        "id": str(item.get("id") or item.get("contract_id") or ""),
+        "placa_carro":               item.get("placa_carro")               or item.get("placaCarro"),
+        "retirada_provisorio":       item.get("retirada_provisorio")       or item.get("retiradaProvisorio"),
+        "km_excedente_value":        item.get("km_excedente_value")        or item.get("kmExcedenteValue")        or "0.00",
+        "frequency_of_use":          item.get("frequency_of_use")          or item.get("frequencyOfUse"),
+        "usage_type":                item.get("usage_type")                or item.get("usageType"),
+        "is_reversal":               item.get("is_reversal")               or item.get("isReversal")              or 0,
+        "reversal_value":            item.get("reversal_value")            or item.get("reversalValue"),
+        "franquia_coparticipacao":   item.get("franquia_coparticipacao")   or item.get("franquiaCoparticipacao")  or "0",
+        "cobertura_danos_materiais": item.get("cobertura_danos_materiais") or item.get("coberturaDanosMateriais") or "--",
+        "cobertura_danos_corporais": item.get("cobertura_danos_corporais") or item.get("coberturaDanosCorporais") or "--",
+        "is_active":                 item.get("is_active")                 or item.get("isActive")                or 1,
+        "is_extended":               item.get("is_extended")               or item.get("isExtended")              or 0,
+        "extension_months":          item.get("extension_months")          or item.get("extensionMonths"),
+        "automatic_send_link":       item.get("automatic_send_link")       or item.get("automaticSendLink")       or 1,
+        "phase_id":                  item.get("phase_id") or "",
+    }
 
-    Estrutura real da resposta: data → data → contracts → data (lista)
-    CPF real está em: item → order → client → num_cpf
+
+async def _lookup_contrato_por_cpf(
+    cpf_norm: str,
+    digits: str,
+    twofa_callback=None,
+    placa: str = None,
+) -> Optional[dict]:
+    """
+    Busca contratos na API Byetech pelo CPF.
+    Quando há múltiplos contratos para o mesmo CPF (cliente com mais de um veículo),
+    seleciona o correto na seguinte ordem de prioridade:
+      1. Não entregue (phase_id != PHASE_ID_ENTREGUE) com placa correspondente
+      2. Não entregue sem placa específica
+      3. Qualquer contrato (fallback — CPF sem contrato ativo)
+    Sem essa desambiguação, clientes com >1 contrato recebem a data errada no contrato errado.
     """
     try:
         cookies = await get_session(twofa_callback)
@@ -765,7 +794,7 @@ async def _lookup_contrato_por_cpf(cpf_norm: str, digits: str, twofa_callback=No
             for cpf_try in [cpf_norm, digits, cpf_norm.lstrip("0")]:
                 resp = await client.get(
                     f"{API_URL}/api/contracts",
-                    params={"cpfCnpj": cpf_try, "per_page": 5},
+                    params={"cpfCnpj": cpf_try, "per_page": 10},
                     headers=headers,
                     cookies=cookies,
                 )
@@ -783,38 +812,63 @@ async def _lookup_contrato_por_cpf(cpf_norm: str, digits: str, twofa_callback=No
                 else:
                     items = []
 
+                # Coleta TODOS os contratos que batem com o CPF
+                matches = []
                 for item in items:
-                    # CPF está em item.order.client.num_cpf
                     order      = item.get("order") or {}
                     client_obj = order.get("client") or {}
                     cpf_api    = re.sub(r"\D", "", str(client_obj.get("num_cpf") or ""))
                     if not cpf_api:
-                        # fallback: campos camelCase direto no item (versões antigas)
                         cpf_api = re.sub(r"\D", "", str(
                             item.get("cpfCnpj") or item.get("cpf_cnpj") or ""
                         ))
-
                     if cpf_api.lstrip("0") == cpf_norm.lstrip("0") or cpf_api == digits:
                         cid = item.get("id") or item.get("contract_id")
                         if cid:
-                            logger.info(f"[Byetech] CPF {cpf_norm[:6]}... → contrato {cid} via API")
-                            return {
-                                "id": str(cid),
-                                "placa_carro":              item.get("placa_carro")               or item.get("placaCarro"),
-                                "retirada_provisorio":      item.get("retirada_provisorio")       or item.get("retiradaProvisorio"),
-                                "km_excedente_value":       item.get("km_excedente_value")        or item.get("kmExcedenteValue")        or "0.00",
-                                "frequency_of_use":         item.get("frequency_of_use")          or item.get("frequencyOfUse"),
-                                "usage_type":               item.get("usage_type")                or item.get("usageType"),
-                                "is_reversal":              item.get("is_reversal")               or item.get("isReversal")              or 0,
-                                "reversal_value":           item.get("reversal_value")            or item.get("reversalValue"),
-                                "franquia_coparticipacao":  item.get("franquia_coparticipacao")   or item.get("franquiaCoparticipacao")  or "0",
-                                "cobertura_danos_materiais":item.get("cobertura_danos_materiais") or item.get("coberturaDanosMateriais") or "--",
-                                "cobertura_danos_corporais":item.get("cobertura_danos_corporais") or item.get("coberturaDanosCorporais") or "--",
-                                "is_active":                item.get("is_active")                 or item.get("isActive")                or 1,
-                                "is_extended":              item.get("is_extended")               or item.get("isExtended")              or 0,
-                                "extension_months":         item.get("extension_months")          or item.get("extensionMonths"),
-                                "automatic_send_link":      item.get("automatic_send_link")       or item.get("automaticSendLink")       or 1,
-                            }
+                            matches.append(item)
+
+                if not matches:
+                    continue
+
+                # 1 único resultado — retorna direto
+                if len(matches) == 1:
+                    entry = _item_to_entry(matches[0])
+                    logger.info(f"[Byetech] CPF {cpf_norm[:6]}... → contrato {entry['id']} via API")
+                    return entry
+
+                # Múltiplos contratos para o mesmo CPF — seleciona o correto
+                logger.info(
+                    f"[Byetech] CPF {cpf_norm[:6]}... → {len(matches)} contratos. "
+                    f"Selecionando pelo status (nao-entregue) e placa={placa!r}..."
+                )
+                nao_entregues = [m for m in matches if m.get("phase_id") != PHASE_ID_ENTREGUE]
+
+                # Candidatos: prefere não-entregues, senão usa todos
+                candidatos = nao_entregues if nao_entregues else matches
+
+                # Se temos placa, tenta desambiguar por ela
+                if placa:
+                    placa_norm = re.sub(r"[^A-Z0-9]", "", (placa or "").upper())
+                    placa_match = [
+                        m for m in candidatos
+                        if re.sub(r"[^A-Z0-9]", "", (m.get("placa_carro") or m.get("placaCarro") or "").upper()) == placa_norm
+                    ]
+                    if placa_match:
+                        entry = _item_to_entry(placa_match[0])
+                        logger.info(
+                            f"[Byetech] CPF {cpf_norm[:6]}... → contrato {entry['id']} "
+                            f"(desambiguado por placa={placa})"
+                        )
+                        return entry
+
+                # Usa o primeiro não-entregue (ou primeiro de todos como fallback)
+                entry = _item_to_entry(candidatos[0])
+                logger.info(
+                    f"[Byetech] CPF {cpf_norm[:6]}... → contrato {entry['id']} "
+                    f"(1o nao-entregue de {len(matches)} contratos)"
+                )
+                return entry
+
     except Exception as e:
         logger.error(f"[Byetech] Erro ao buscar contrato por CPF via API: {e}")
     return None
@@ -859,9 +913,10 @@ async def update_delivery_by_cpf(
                  or cpf_map.get(cpf_norm + "0"))
 
     # Fallback: busca o contrato diretamente na API Byetech pelo CPF
+    # Passa placa para desambiguar quando o cliente tem mais de um contrato
     if not entry:
         logger.info(f"[Byetech] Mapa CPF indisponível — buscando na API para CPF {cpf_norm[:6]}...")
-        entry = await _lookup_contrato_por_cpf(cpf_norm, digits, twofa_callback)
+        entry = await _lookup_contrato_por_cpf(cpf_norm, digits, twofa_callback, placa=placa)
 
     if not entry:
         raise Exception(
