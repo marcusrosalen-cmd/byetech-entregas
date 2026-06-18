@@ -188,15 +188,16 @@ async def fetch_all_active(include_recent_delivered_days: int = 180) -> list[dic
     """
     Busca contratos ativos + contratos entregues recentemente do Metabase.
 
+    O card público retorna contrato_ativo=True para TODOS os registros (inclusive
+    entregues), por isso o filtro usa data_entrega_definitivo — não contrato_ativo.
+
     Regra de inclusão:
-    - Ativo (contrato_ativo != false/0): sempre inclui
-    - Inativo COM data_entrega_definitivo recente (<= include_recent_delivered_days): inclui
-    - Inativo COM data_entrega_definitivo antiga (> include_recent_delivered_days): PULA
-      → evita re-importar histórico completo a cada restart, que causava "aumento repentino"
-    - Inativo SEM data_entrega_definitivo: pula (cancelado / erro de cadastro)
+    - Sem data_entrega_definitivo: sempre inclui (contrato ativo)
+    - Com data_entrega_definitivo recente (<= include_recent_delivered_days): inclui
+    - Com data_entrega_definitivo antiga (> include_recent_delivered_days): PULA
+      → evita re-importar histórico completo a cada restart (aumento repentino)
     - estorno=true: pula sempre
     """
-    from datetime import timezone
     rows = await _fetch_metabase()
     logger.info(f"Metabase: {len(rows)} registros totais")
 
@@ -209,20 +210,14 @@ async def fetch_all_active(include_recent_delivered_days: int = 180) -> list[dic
         if r.get("estorno"):
             continue
 
-        ativo = r.get("contrato_ativo")
-        is_inactive = (ativo is False or ativo == 0 or ativo == "0")
         data_entrega = _parse_date(r.get("data_entrega_definitivo"))
-        tem_entrega = bool(data_entrega)
 
-        if is_inactive and not tem_entrega:
-            continue  # cancelado ou inativo sem entrega
-
-        if is_inactive and tem_entrega and data_entrega < cutoff:
+        if data_entrega and data_entrega < cutoff:
             n_entregues_antigos += 1
             continue  # entregue há mais de include_recent_delivered_days dias — não re-importa
 
         c = _row_to_contrato(r)
-        if tem_entrega:
+        if data_entrega:
             n_entregues += 1
         result.append(c)
 
