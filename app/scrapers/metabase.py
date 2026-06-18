@@ -184,43 +184,52 @@ async def _fetch_metabase(params_json: list = None) -> list[dict]:
     return []
 
 
-async def fetch_all_active(include_recent_delivered_days: int = 30) -> list[dict]:
+async def fetch_all_active(include_recent_delivered_days: int = 180) -> list[dict]:
     """
-    Busca todos os contratos ativos + TODOS os contratos entregues do Metabase.
-
-    O parâmetro include_recent_delivered_days é mantido por compatibilidade,
-    mas não limita mais o período de entregues: todos são incluídos para garantir
-    que os históricos sejam restaurados automaticamente após restart do servidor
-    (Render free tier tem filesystem efêmero — o sync diário reconstrói o banco).
+    Busca contratos ativos + contratos entregues recentemente do Metabase.
 
     Regra de inclusão:
     - Ativo (contrato_ativo != false/0): sempre inclui
-    - Inativo COM data_entrega_definitivo: inclui (entregue)
+    - Inativo COM data_entrega_definitivo recente (<= include_recent_delivered_days): inclui
+    - Inativo COM data_entrega_definitivo antiga (> include_recent_delivered_days): PULA
+      → evita re-importar histórico completo a cada restart, que causava "aumento repentino"
     - Inativo SEM data_entrega_definitivo: pula (cancelado / erro de cadastro)
     - estorno=true: pula sempre
     """
+    from datetime import timezone
     rows = await _fetch_metabase()
     logger.info(f"Metabase: {len(rows)} registros totais")
 
+    cutoff = datetime.utcnow() - timedelta(days=include_recent_delivered_days)
+
     result = []
     n_entregues = 0
+    n_entregues_antigos = 0
     for r in rows:
         if r.get("estorno"):
             continue
 
         ativo = r.get("contrato_ativo")
         is_inactive = (ativo is False or ativo == 0 or ativo == "0")
-        tem_entrega = bool(_parse_date(r.get("data_entrega_definitivo")))
+        data_entrega = _parse_date(r.get("data_entrega_definitivo"))
+        tem_entrega = bool(data_entrega)
 
         if is_inactive and not tem_entrega:
-            continue  # cancelado ou inativo sem entrega — ignora
+            continue  # cancelado ou inativo sem entrega
+
+        if is_inactive and tem_entrega and data_entrega < cutoff:
+            n_entregues_antigos += 1
+            continue  # entregue há mais de include_recent_delivered_days dias — não re-importa
 
         c = _row_to_contrato(r)
         if tem_entrega:
             n_entregues += 1
         result.append(c)
 
-    logger.info(f"Metabase: {len(result) - n_entregues} ativos + {n_entregues} entregues (histórico completo)")
+    logger.info(
+        f"Metabase: {len(result) - n_entregues} ativos + {n_entregues} entregues recentes "
+        f"({n_entregues_antigos} históricos ignorados)"
+    )
     return result
 
 
