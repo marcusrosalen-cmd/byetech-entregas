@@ -66,7 +66,12 @@ _FONTE_OVERRIDES: dict[str, str] = {
 }
 
 
-async def _upsert_contrato(session: AsyncSession, data: dict, portal_update: bool = False) -> bool:
+async def _upsert_contrato(
+    session: AsyncSession,
+    data: dict,
+    portal_update: bool = False,
+    from_metabase: bool = False,
+) -> bool:
     """
     Insere ou atualiza um contrato.
     Retorna True se houve mudança de status.
@@ -74,6 +79,11 @@ async def _upsert_contrato(session: AsyncSession, data: dict, portal_update: boo
     portal_update=True → atualiza apenas status e datas (portal é fonte de status,
     nunca de dados do cliente). Byetech CRM é sempre a fonte de verdade para
     nome, locadora, veículo, placa e e-mail.
+
+    from_metabase=True → novos contratos entram com ativo=True.
+    from_metabase=False (padrão) → novos contratos entram com ativo=False,
+    ficando invisíveis no dashboard até o próximo sync do Metabase os confirmar.
+    Isso impede que syncs de portal inflem o contador além do que o Metabase reporta.
     """
     fonte = data.get("fonte", "")
     id_externo = data.get("id_externo", "")
@@ -184,6 +194,7 @@ async def _upsert_contrato(session: AsyncSession, data: dict, portal_update: boo
             dias_para_entrega=dias,
             atrasado=atrasado,
             vendedor=data.get("vendedor", ""),
+            ativo=from_metabase,  # apenas Metabase pode criar contratos visíveis no dashboard
         )
         session.add(novo)
 
@@ -1284,8 +1295,8 @@ async def run_metabase_sync(full: bool = False) -> dict:
                     novas_entregas.append(c)
 
             # portal_update=False: Metabase é fonte de verdade para nome, CPF, veículo
-            # (dados vêm diretamente do BD do Byetech CRM via Metabase)
-            await _upsert_contrato(session, c, portal_update=False)
+            # from_metabase=True: novos contratos entram como ativo=True
+            await _upsert_contrato(session, c, portal_update=False, from_metabase=True)
             importados += 1
 
             # Commit parcial a cada BATCH_SIZE — torna dados visíveis para outros readers
@@ -1314,11 +1325,28 @@ async def run_metabase_sync(full: bool = False) -> dict:
                     _upd(Contrato).where(Contrato.id.in_(chunk)).values(ativo=True)
                 )
             await session.commit()
-            inativos = len([c for c in contratos if not c.get("data_entrega_definitiva")])
-            logger.info(
-                f"[Metabase] Reconciliação: {importados} no card → ativo=True; "
-                f"contratos fora do card marcados ativo=False"
-            )
+
+            # Validação de hard-cap: conta ativos no banco vs retornados pelo Metabase
+            from sqlalchemy import func as _func
+            from app.database import Contrato as _C
+            n_ativos_db = (await session.execute(
+                select(_func.count()).select_from(_C).where(
+                    _C.data_entrega_definitiva.is_(None),
+                    _C.ativo != False,
+                )
+            )).scalar()
+            n_metabase_ativos = len([c for c in contratos if not c.get("data_entrega_definitiva")])
+            if n_ativos_db > n_metabase_ativos:
+                logger.warning(
+                    f"[Metabase] HARD-CAP VIOLADO: banco={n_ativos_db} > metabase={n_metabase_ativos}. "
+                    f"Isso NAO deveria ocorrer — investigar contratos extras."
+                )
+            else:
+                logger.info(
+                    f"[Metabase] Reconciliação OK: banco={n_ativos_db} ativos <= "
+                    f"metabase={n_metabase_ativos} ({importados} no card → ativo=True; "
+                    f"fora do card → ativo=False)"
+                )
 
     # Notifica Byetech sobre novas entregas detectadas via Metabase
     if novas_entregas:
