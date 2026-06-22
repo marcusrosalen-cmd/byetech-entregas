@@ -1473,6 +1473,190 @@ async def run_metabase_sync(full: bool = False) -> dict:
     return {"importados": importados, "novas_entregas": len(novas_entregas)}
 
 
+async def run_lm_portal_sync() -> dict:
+    """
+    Verifica contratos LM Assinecar no portal Sign & Drive usando credenciais LM.
+    Credenciais via env vars: LM_SD_LOGIN, LM_SD_SENHA (obrigatorias).
+    LM_DEALER_ID (default 2740), LM_GROUP_ID (default 707).
+
+    Retorna {entregues, mudancas_status, sem_match, erros}.
+    """
+    import os as _os
+    from app.scrapers.signanddrive import (
+        _sd_login_with_creds, _build_doc_index_for_dealer,
+        _fetch_order, _parse_order, _normalizar_cpf, _cpf_variants, _digits,
+    )
+    from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+    from sqlalchemy import and_
+
+    lm_login = _os.getenv("LM_SD_LOGIN")
+    lm_senha = _os.getenv("LM_SD_SENHA")
+    if not lm_login or not lm_senha:
+        logger.info("[LM] LM_SD_LOGIN/LM_SD_SENHA nao configurados — sync LM ignorado")
+        return {"entregues": [], "mudancas_status": [], "sem_match": 0, "erros": []}
+
+    dealer_id = int(_os.getenv("LM_DEALER_ID", "2740"))
+    group_id  = int(_os.getenv("LM_GROUP_ID",  "707"))
+
+    resultado: dict = {"entregues": [], "mudancas_status": [], "sem_match": 0, "erros": []}
+
+    # Carrega contratos LM pendentes
+    async with SessionLocal() as s:
+        res = await s.execute(
+            select(Contrato).where(
+                and_(
+                    Contrato.fonte == "LM",
+                    Contrato.data_entrega_definitiva.is_(None),
+                )
+            )
+        )
+        contratos_lm = res.scalars().all()
+
+    if not contratos_lm:
+        logger.info("[LM] Nenhum contrato LM pendente")
+        return resultado
+
+    logger.info(f"[LM] {len(contratos_lm)} contratos LM pendentes — consultando portal...")
+
+    loop = asyncio.get_event_loop()
+
+    # Login LM
+    try:
+        token, did, gid = await loop.run_in_executor(
+            None, _sd_login_with_creds, lm_login, lm_senha
+        )
+        logger.info(f"[LM] Login OK — dealershipId={did}")
+    except Exception as e:
+        resultado["erros"].append(f"Login LM falhou: {e}")
+        logger.error(f"[LM] Login falhou: {e}")
+        return resultado
+
+    # Índice CPF->orderId
+    try:
+        cpf_index = await loop.run_in_executor(
+            None, _build_doc_index_for_dealer, token, did, gid
+        )
+        logger.info(f"[LM] Indice: {len(cpf_index)} entradas")
+    except Exception as e:
+        resultado["erros"].append(f"Indice LM falhou: {e}")
+        logger.error(f"[LM] Indice falhou: {e}")
+        return resultado
+
+    # Mapeia contratos para orderIds
+    order_map: dict = {}
+    sem_match = 0
+    for c in contratos_lm:
+        doc_raw  = c.cliente_cpf_cnpj or ""
+        digits   = _digits(doc_raw)
+        cpf_norm = _normalizar_cpf(doc_raw)
+        oid = cpf_index.get(cpf_norm)
+        if not oid:
+            for v in _cpf_variants(doc_raw):
+                oid = cpf_index.get(v)
+                if oid:
+                    break
+        if oid:
+            order_map.setdefault(oid, []).append(c)
+        else:
+            sem_match += 1
+
+    resultado["sem_match"] = sem_match
+    logger.info(f"[LM] {len(order_map)} orderIds mapeados | {sem_match} sem match")
+
+    # Busca detalhes dos pedidos em paralelo
+    def _fetch(oid):
+        return oid, _parse_order(_fetch_order(oid, token))
+
+    order_details: dict = {}
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futs = {ex.submit(_fetch, oid): oid for oid in order_map}
+        for fut in _as_completed(futs):
+            oid = futs[fut]
+            try:
+                _, detail = fut.result()
+                order_details[oid] = detail
+            except Exception as e:
+                logger.warning(f"[LM] Erro pedido {oid}: {e}")
+                order_details[oid] = {}
+
+    # Processa resultados e salva no banco
+    _entregas_byetech: dict = {}
+    async with SessionLocal() as s:
+        for oid, clis in order_map.items():
+            detail     = order_details.get(oid, {})
+            entregue   = detail.get("entregue", False)
+            data_ent   = detail.get("data_entrega")
+            placa      = detail.get("placa") or ""
+            status_desc = detail.get("status_desc", "")
+
+            for c in clis:
+                status_ant = c.status_atual
+                if entregue and data_ent:
+                    c.data_entrega_definitiva = data_ent
+                    c.status_atual = "Definitivo entregue"
+                    if placa and not c.placa:
+                        c.placa = placa
+                    c.ultima_atualizacao = datetime.utcnow()
+                    s.add(c)
+                    resultado["entregues"].append({
+                        "fonte": "LM",
+                        "cliente_nome": c.cliente_nome,
+                        "placa": placa or c.placa or "",
+                        "veiculo": c.veiculo,
+                        "data_entrega": data_ent,
+                    })
+                    cpf_d = re.sub(r"\D", "", c.cliente_cpf_cnpj or "")
+                    if cpf_d and cpf_d not in _entregas_byetech:
+                        _entregas_byetech[cpf_d] = {
+                            "cpf_raw":      c.cliente_cpf_cnpj,
+                            "placa":        placa or c.placa or "",
+                            "data":         data_ent,
+                            "cliente_nome": c.cliente_nome,
+                            "contrato_id":  c.id,
+                        }
+                    logger.info(
+                        f"[LM] ENTREGUE: {c.cliente_nome} — "
+                        f"{data_ent.date() if hasattr(data_ent,'date') else data_ent} "
+                        f"placa={placa or '?'}"
+                    )
+                elif status_desc and c.status_atual != status_desc:
+                    c.status_atual = status_desc
+                    c.ultima_atualizacao = datetime.utcnow()
+                    s.add(c)
+                    resultado["mudancas_status"].append({
+                        "cliente_nome":    c.cliente_nome,
+                        "status_anterior": status_ant,
+                        "status_novo":     status_desc,
+                    })
+        await s.commit()
+
+    # Atualiza Byetech CRM para entregas detectadas
+    if _entregas_byetech:
+        logger.info(f"[LM] Atualizando {len(_entregas_byetech)} entrega(s) no Byetech...")
+        try:
+            from app.scrapers.byetech_crm import update_delivery_by_cpf as _upd
+        except ImportError:
+            _upd = None
+        for cpf_d, info in _entregas_byetech.items():
+            try:
+                if _upd:
+                    ok = await _upd(cpf_raw=info["cpf_raw"], data_entrega=info["data"], placa=info["placa"] or None)
+                    if not ok:
+                        await _enfileirar_byetech(info["contrato_id"], info["cpf_raw"], info["placa"], info["data"], info["cliente_nome"])
+                else:
+                    await _enfileirar_byetech(info["contrato_id"], info["cpf_raw"], info["placa"], info["data"], info["cliente_nome"])
+            except Exception as _be:
+                await _enfileirar_byetech(info["contrato_id"], info["cpf_raw"], info["placa"], info["data"], info["cliente_nome"])
+                resultado["erros"].append(f"Byetech LM {info['cliente_nome']}: {str(_be)[:80]}")
+
+    logger.info(
+        f"[LM] Sync: {len(resultado['entregues'])} entregas | "
+        f"{len(resultado['mudancas_status'])} mudancas | "
+        f"{resultado['sem_match']} sem match"
+    )
+    return resultado
+
+
 async def run_historico_entregues_import() -> dict:
     """
     Importa todos os contratos entregues históricos do Metabase.

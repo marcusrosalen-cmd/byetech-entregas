@@ -1961,12 +1961,35 @@ async def sync_signanddrive(body: SdSyncBody | None = None):
             except Exception as slack_err:
                 logger.warning(f"Sign & Drive Slack nao enviado: {slack_err}")
 
+            # LM Assinecar — roda logo após S&D no mesmo job
+            try:
+                from app.services.sync_service import run_lm_portal_sync
+                resultado_lm = await run_lm_portal_sync()
+                n_ent_lm = len(resultado_lm.get("entregues", []))
+                n_mud_lm = len(resultado_lm.get("mudancas_status", []))
+                if n_ent_lm or n_mud_lm:
+                    try:
+                        channel = await get_or_create_channel()
+                        client  = get_client()
+                        hoje_str = datetime.now().strftime("%d/%m/%Y %H:%M")
+                        linhas_lm = [f"*🏪 LM Assinecar Sync — {hoje_str}*"]
+                        linhas_lm.append(f"Entregues: *{n_ent_lm}* | Mudancas: *{n_mud_lm}*")
+                        for e in resultado_lm.get("entregues", []):
+                            de = e.get("data_entrega")
+                            de_fmt = de.strftime("%d/%m/%Y") if de and hasattr(de, "strftime") else str(de or "—")
+                            linhas_lm.append(f"  ✅ *{e.get('cliente_nome','—')}* — {e.get('placa','')} | {de_fmt}")
+                        await client.chat_postMessage(channel=channel, text="\n".join(linhas_lm), mrkdwn=True)
+                    except Exception as _se:
+                        logger.warning(f"LM Slack nao enviado: {_se}")
+            except Exception as _lm_e:
+                logger.error(f"Erro sync LM Assinecar: {_lm_e}")
+
         except Exception as e:
             set_sync_state(status="error", message=str(e))
             logger.error(f"Erro sync Sign & Drive: {e}", exc_info=True)
 
     asyncio.create_task(_run())
-    return {"ok": True, "message": "Sync Sign & Drive iniciada. Resultado chegara no Slack."}
+    return {"ok": True, "message": "Sync Sign & Drive + LM Assinecar iniciada. Resultado chegara no Slack."}
 
 
 @app.post("/api/sync/gwm")

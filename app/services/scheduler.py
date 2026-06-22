@@ -300,9 +300,9 @@ async def job_metabase_daily():
 
 
 async def job_signanddrive_daily():
-    """Job diário (dias úteis): atualiza status dos pedidos Sign & Drive via API."""
-    from app.services.sync_service import run_signanddrive_sync
-    logger.info("⏰ [scheduler] Sign & Drive sync diário...")
+    """Job diário (dias úteis): atualiza status S&D + LM Assinecar via API."""
+    from app.services.sync_service import run_signanddrive_sync, run_lm_portal_sync
+    logger.info("⏰ [scheduler] Sign & Drive + LM sync diário...")
     try:
         result = await run_signanddrive_sync()
         n_ent = len(result.get("entregues", []))
@@ -310,6 +310,14 @@ async def job_signanddrive_daily():
         logger.info(f"✅ [scheduler] Sign & Drive: {n_ent} entregues | {n_mud} mudanças de status")
     except Exception as e:
         logger.error(f"❌ [scheduler] Sign & Drive erro: {e}")
+
+    try:
+        result_lm = await run_lm_portal_sync()
+        n_ent_lm = len(result_lm.get("entregues", []))
+        n_mud_lm = len(result_lm.get("mudancas_status", []))
+        logger.info(f"✅ [scheduler] LM Assinecar: {n_ent_lm} entregues | {n_mud_lm} mudanças")
+    except Exception as e:
+        logger.error(f"❌ [scheduler] LM Assinecar erro: {e}")
 
 
 async def job_gwm_lm_daily():

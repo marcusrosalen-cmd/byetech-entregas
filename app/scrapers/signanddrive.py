@@ -115,6 +115,35 @@ def _sd_login() -> str:
         return json.loads(r.read())["token"]
 
 
+def _sd_login_with_creds(login: str, senha: str) -> tuple:
+    """Login com credenciais customizadas. Retorna (token, dealershipId, dealershipGroupId)."""
+    payload = json.dumps({"login": login, "password": senha}).encode()
+    req = urllib.request.Request(
+        API_LOGIN, data=payload,
+        headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as r:
+        d = json.loads(r.read())
+    return d["token"], int(d.get("dealershipId", 0)), int(d.get("dealershipGroupId", 0))
+
+
+def _build_doc_index_for_dealer(token: str, dealer_id: int, group_id: int) -> dict:
+    """Constrói índice CPF/CNPJ->orderId para um dealer específico."""
+    global API_MGMT
+    original = API_MGMT
+    try:
+        API_MGMT = (
+            f"{API_BASE}/dealership-management"
+            f"?dealershipId={dealer_id}&dealershipGroupId={group_id}"
+            f"&role=Admin+da+Concession%C3%A1ria"
+            f"&userDnId=0&Page=true&QuantityPerPage=100"
+            f"&dateStart={{ds}}&dateEnd={{de}}&status={{st}}&CurrentPage={{pg}}"
+        )
+        return _build_doc_index(token)
+    finally:
+        API_MGMT = original
+
+
 # ── CPF Index ─────────────────────────────────────────────────────────────────
 
 def _fetch_page(token: str, ds: str, de: str, page: int, status: str = ""):
