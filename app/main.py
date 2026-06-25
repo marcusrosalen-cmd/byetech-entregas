@@ -1518,7 +1518,7 @@ async def renovar_sessao_byetech():
                 set_sync_state(status="running", message="Sessão renovada! Processando pendentes...")
                 logger.info("[Byetech] Sessão renovada com sucesso")
                 await _flush_byetech_pending()
-                pending = _get_pending_count()
+                pending = await _get_pending_count()
                 msg = "Sessão Byetech renovada!" + (f" {pending} pendente(s) restante(s)." if pending else " Todos os pendentes processados.")
                 set_sync_state(status="done", message=msg, atualizados=0)
             else:
