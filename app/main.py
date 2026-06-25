@@ -1955,6 +1955,10 @@ async def sync_signanddrive(body: SdSyncBody | None = None):
                             f"  🔄 *{m.get('cliente_nome','—')}* "
                             f"{m.get('status_anterior','—')} → {m.get('status_novo','—')}"
                         )
+                if resultado.get("erros"):
+                    linhas.append("")
+                    for err in resultado["erros"][:3]:
+                        linhas.append(f"  ⚠️ {err}")
                 await client.chat_postMessage(
                     channel=channel, text="\n".join(linhas), mrkdwn=True
                 )
