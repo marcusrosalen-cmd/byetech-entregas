@@ -1314,6 +1314,52 @@ async def processar_pendentes_byetech(
     }
 
 
+@app.post("/api/admin/reset-entregas-hoje")
+async def admin_reset_entregas_hoje(secret: str = Header(None, alias="X-Sync-Secret")):
+    """
+    Limpa data_entrega_definitiva de contratos com datas falsas (criadas pelo cleanup antigo)
+    e reseta status para 'Onboarding concluído'.
+    Critério de segurança: apenas contratos com ativo=False + data recente (últimos 7 dias),
+    que são exatamente os que o cleanup antigo manipulou.
+    Entregas reais de portal ficam intactas (ativo=True).
+    """
+    if secret != SESSION_PUSH_SECRET:
+        raise HTTPException(403, "Forbidden")
+
+    from app.database import SessionLocal, Contrato
+    from datetime import timedelta
+    from sqlalchemy import and_
+
+    cutoff = datetime.utcnow() - timedelta(days=7)
+
+    async with SessionLocal() as s:
+        res = await s.execute(
+            select(Contrato).where(
+                and_(
+                    Contrato.data_entrega_definitiva >= cutoff,
+                    Contrato.ativo == False,
+                )
+            )
+        )
+        candidates = res.scalars().all()
+
+        resetados = []
+        for c in candidates:
+            c.data_entrega_definitiva = None
+            c.status_atual = "Onboarding concluído"
+            c.ativo = True
+            resetados.append(c.cliente_nome or c.id)
+            s.add(c)
+
+        await s.commit()
+
+    return {
+        "ok": True,
+        "resetados": len(resetados),
+        "nomes": resetados[:100],
+    }
+
+
 @app.post("/api/byetech/rebuild-and-flush")
 async def rebuild_and_flush_byetech(body: ProcessarPendentesBody):
     """
