@@ -126,6 +126,15 @@ async def _upsert_contrato(
 
         if data.get("data_entrega_definitiva"):
             existing.data_entrega_definitiva = data["data_entrega_definitiva"]
+        elif not portal_update and existing.data_entrega_definitiva and existing.ultima_atualizacao:
+            # Metabase não tem data de entrega real para este contrato.
+            # Se a data no banco é igual a ultima_atualizacao (±60s), foi proxy do cleanup
+            # antigo — limpa para evitar falso positivo na aba Entregues.
+            diff_s = abs((existing.data_entrega_definitiva - existing.ultima_atualizacao).total_seconds())
+            if diff_s <= 60:
+                existing.data_entrega_definitiva = None
+                existing.status_atual = data.get("status_atual") or existing.status_atual
+                existing.ativo = True
 
         if data.get("data_venda"):
             existing.data_venda = data["data_venda"]
