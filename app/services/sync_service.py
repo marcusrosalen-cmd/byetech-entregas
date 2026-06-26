@@ -1250,10 +1250,9 @@ _STATUS_ENTREGUE_KEYWORDS = ("definitivo entregue", "veiculo entregue", "entregu
 
 async def _cleanup_status_entregue_sem_data() -> int:
     """
-    Contratos onde status indica entrega mas data_entrega_definitiva esta em branco
-    (dado inconsistente vindo do Metabase / portais).
-    Usa data_prevista_entrega como proxy para tirar do dashboard de atrasados.
-    NAO notifica Byetech — a data proxy nao e a data real da entrega.
+    Contratos onde status indica entrega mas data_entrega_definitiva esta em branco.
+    Apenas marca ativo=False para tirá-los do dashboard de atrasados.
+    NAO define data_entrega_definitiva — sem data real de portal nao inventamos uma.
     Retorna quantidade de registros corrigidos.
     """
     from sqlalchemy import and_
@@ -1277,16 +1276,13 @@ async def _cleanup_status_entregue_sem_data() -> int:
 
     async with SessionLocal() as s:
         for c in para_corrigir:
-            data_proxy = c.data_prevista_entrega or c.ultima_atualizacao or datetime.utcnow()
-            c.data_entrega_definitiva = data_proxy
             c.ativo = False
-            c.ultima_atualizacao = datetime.utcnow()
             s.add(c)
         await s.commit()
 
     logger.info(
-        f"[cleanup] {len(para_corrigir)} contrato(s) com status=entregue sem data corrigidos "
-        f"(data_prevista usada como proxy; Byetech NAO atualizado)"
+        f"[cleanup] {len(para_corrigir)} contrato(s) com status=entregue sem data → ativo=False "
+        f"(sem data real de portal, nao inventamos data)"
     )
     return len(para_corrigir)
 

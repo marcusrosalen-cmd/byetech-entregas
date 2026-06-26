@@ -1178,6 +1178,66 @@ class ProcessarPendentesBody(BaseModel):
     max_itens: int = 50
 
 
+@app.post("/api/contratos/limpar-datas-proxy")
+async def limpar_datas_proxy(secret: str = Header(None, alias="X-Sync-Secret")):
+    """
+    Remove data_entrega_definitiva de contratos cujo status indica entrega
+    mas que nao possuem confirmacao real de portal (data = proxy incorreto).
+    Operacao segura: afeta apenas contratos onde status contem 'entregue' e
+    data_entrega_definitiva foi setada hoje (proxy de ultima_atualizacao).
+    """
+    if secret != SESSION_PUSH_SECRET:
+        raise HTTPException(403, "Forbidden")
+
+    from app.database import SessionLocal, Contrato
+    from datetime import date, timezone
+    from sqlalchemy import and_, func
+
+    hoje_inicio = datetime.combine(date.today(), datetime.min.time())
+    hoje_fim    = datetime.combine(date.today(), datetime.max.time())
+
+    _STATUS_KEYWORDS = ("definitivo entregue", "veiculo entregue", "entregue")
+
+    async with SessionLocal() as s:
+        res = await s.execute(
+            select(Contrato).where(
+                and_(
+                    Contrato.data_entrega_definitiva >= hoje_inicio,
+                    Contrato.data_entrega_definitiva <= hoje_fim,
+                )
+            )
+        )
+        candidates = res.scalars().all()
+
+    # Filtra apenas os que vieram de cleanup (status=entregue, sem entrega real de portal)
+    # Contratos com entrega real de portal têm data_entrega_definitiva preenchida com data
+    # do portal — que pode ser hoje legítimamente; preservamos esses.
+    # O critério de segurança: só limpa se a data_entrega = ultima_atualizacao (dentro de 1 min)
+    para_limpar = []
+    for c in candidates:
+        if not any(k in (c.status_atual or "").lower() for k in _STATUS_KEYWORDS):
+            continue
+        if c.ultima_atualizacao and c.data_entrega_definitiva:
+            diff = abs((c.data_entrega_definitiva - c.ultima_atualizacao).total_seconds())
+            if diff < 60:  # data == ultima_atualizacao → veio do cleanup
+                para_limpar.append(c)
+
+    if para_limpar:
+        async with SessionLocal() as s:
+            for c in para_limpar:
+                c.data_entrega_definitiva = None
+                c.ativo = True
+                s.add(c)
+            await s.commit()
+
+    return {
+        "ok": True,
+        "candidatos": len(candidates),
+        "limpos": len(para_limpar),
+        "nomes": [c.cliente_nome for c in para_limpar],
+    }
+
+
 @app.post("/api/byetech/pendentes/processar")
 async def processar_pendentes_byetech(
     body: ProcessarPendentesBody,
