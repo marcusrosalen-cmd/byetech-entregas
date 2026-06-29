@@ -1186,12 +1186,12 @@ async def limpar_datas_proxy(secret: str = Header(None, alias="X-Sync-Secret")):
     Operacao segura: afeta apenas contratos onde status contem 'entregue' e
     data_entrega_definitiva foi setada hoje (proxy de ultima_atualizacao).
     """
-    if secret != SESSION_PUSH_SECRET:
+    _secret = os.getenv("SESSION_PUSH_SECRET", "byetech-local")
+    if secret != _secret:
         raise HTTPException(403, "Forbidden")
 
-    from app.database import SessionLocal, Contrato
     from datetime import date, timezone
-    from sqlalchemy import and_, func
+    from sqlalchemy import func
 
     hoje_inicio = datetime.combine(date.today(), datetime.min.time())
     hoje_fim    = datetime.combine(date.today(), datetime.max.time())
@@ -1323,12 +1323,11 @@ async def admin_reset_entregas_hoje(secret: str = Header(None, alias="X-Sync-Sec
     que são exatamente os que o cleanup antigo manipulou.
     Entregas reais de portal ficam intactas (ativo=True).
     """
-    if secret != SESSION_PUSH_SECRET:
+    _secret = os.getenv("SESSION_PUSH_SECRET", "byetech-local")
+    if secret != _secret:
         raise HTTPException(403, "Forbidden")
 
-    from app.database import SessionLocal, Contrato
     from datetime import timedelta
-    from sqlalchemy import and_
 
     cutoff = datetime.utcnow() - timedelta(days=7)
 
@@ -1337,7 +1336,7 @@ async def admin_reset_entregas_hoje(secret: str = Header(None, alias="X-Sync-Sec
             select(Contrato).where(
                 and_(
                     Contrato.data_entrega_definitiva >= cutoff,
-                    Contrato.ativo == False,
+                    Contrato.ativo.is_(False),
                 )
             )
         )
