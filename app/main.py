@@ -1329,32 +1329,40 @@ async def admin_reset_entregas_hoje(secret: str = Header(None, alias="X-Sync-Sec
 
     from datetime import timedelta
 
-    cutoff = datetime.utcnow() - timedelta(days=7)
+    cutoff = datetime.utcnow() - timedelta(days=14)
 
     async with SessionLocal() as s:
         res = await s.execute(
             select(Contrato).where(
-                and_(
-                    Contrato.data_entrega_definitiva >= cutoff,
-                    Contrato.ativo.is_(False),
-                )
+                Contrato.data_entrega_definitiva >= cutoff,
             )
         )
         candidates = res.scalars().all()
 
         resetados = []
+        preservados = []
         for c in candidates:
-            c.data_entrega_definitiva = None
-            c.status_atual = "Onboarding concluído"
-            c.ativo = True
-            resetados.append(c.cliente_nome or c.id)
-            s.add(c)
+            # Data proxy = foi setada pelo cleanup antigo como c.ultima_atualizacao
+            # Data real de portal = data específica diferente de ultima_atualizacao
+            eh_proxy = False
+            if c.ultima_atualizacao and c.data_entrega_definitiva:
+                diff_s = abs((c.data_entrega_definitiva - c.ultima_atualizacao).total_seconds())
+                eh_proxy = diff_s <= 120
+            if eh_proxy:
+                c.data_entrega_definitiva = None
+                c.status_atual = "Onboarding concluído"
+                c.ativo = True
+                resetados.append(c.cliente_nome or c.id)
+                s.add(c)
+            else:
+                preservados.append(f"{c.cliente_nome}|{c.fonte}")
 
         await s.commit()
 
     return {
         "ok": True,
         "resetados": len(resetados),
+        "preservados": len(preservados),
         "nomes": resetados[:100],
     }
 
